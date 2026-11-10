@@ -8,10 +8,18 @@ The image contains `opencode` plus the tools it expects at runtime: `bash`,
 not include Node.js, compilers, or language runtimes; extend it if your
 projects need those.
 
+`cms.Dockerfile` is a variant that extends the minimal image with Chromium's
+runtime libraries, [Playwright](https://playwright.dev), and
+[cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
+(The Playwright package brings in Node.js.)
+
 ## Pull
 
 ```sh
 docker pull ghcr.io/felstormrage/agent-sandbox-image:latest
+
+# CMS variant (Chromium, Playwright, cloudflared)
+docker pull ghcr.io/felstormrage/agent-sandbox-image:cms-latest
 ```
 
 ## Build
@@ -45,6 +53,47 @@ docker build -f minimal.Dockerfile \
   --build-arg WOLFI_BASE=cgr.dev/chainguard/wolfi-base@sha256:<digest> \
   -t opencode-sandbox .
 ```
+
+### CMS variant
+
+`cms.Dockerfile` builds on the minimal image. To use a local minimal build,
+build it first and pass it as `BASE_IMAGE` (the default is the published
+minimal image):
+
+```sh
+docker build -f minimal.Dockerfile -t opencode-sandbox .
+docker build -f cms.Dockerfile \
+  --build-arg BASE_IMAGE=opencode-sandbox:latest \
+  -t opencode-cms .
+```
+
+Or build against the published minimal image without a local base:
+
+```sh
+docker build -f cms.Dockerfile -t opencode-cms .
+```
+
+Chromium is baked into the CMS image at `/opt/playwright-browsers`, which is the
+default `PLAYWRIGHT_BROWSERS_PATH`, so Playwright works out of the box:
+
+```sh
+docker run --rm -it \
+  -v "$PWD:/workspace" \
+  opencode-cms
+```
+
+If your project pins a different Playwright version, you can instead point it at
+a project-managed browser directory:
+
+```sh
+docker run --rm -it \
+  -v "$PWD:/workspace" \
+  -e PLAYWRIGHT_BROWSERS_PATH=/workspace/.playwright-browsers \
+  opencode-cms
+```
+
+Or install the project's browser in the container with
+`playwright install chromium`.
 
 ## Run
 
@@ -94,9 +143,14 @@ msb run -t --name "$project_name" --replace \
 
 `.github/workflows/build.yml` builds `linux/amd64` and `linux/arm64` images and
 pushes them to GHCR on pushes to `main`, version tags, manual runs, and a weekly
-schedule. Pull requests build without pushing. Images are tagged with `latest`
-(on the default branch), the branch name, semver tags, `opencode-<version>`, and
-the commit SHA.
+schedule. Pull requests build without pushing.
+
+The `build` job produces the minimal image; the `build-cms` job then layers
+`cms.Dockerfile` on top of that run's `opencode-<version>` tag (or `:latest` for
+pull requests). Minimal images are tagged with `latest` (on the default branch),
+the branch name, semver tags, `opencode-<version>`, and the commit SHA. CMS
+images mirror those tags with a `-cms` suffix, plus `cms-latest` on the default
+branch.
 
 If the GHCR package is private after the first publish, change its visibility in
 the package settings if you want anonymous pulls.

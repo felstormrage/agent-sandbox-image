@@ -31,13 +31,14 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
 # libatk-1.0. binutils is intentionally omitted: it was only needed to inspect
 # missing libraries with readelf and is not a runtime dependency.
 #
-# Playwright browser binaries are not downloaded here. Use an existing
-# .playwright-browsers directory (set PLAYWRIGHT_BROWSERS_PATH), or run
-# `playwright install chromium` inside the container.
+# The install below bakes Chromium into /opt/playwright-browsers (the default
+# PLAYWRIGHT_BROWSERS_PATH). The browser matches the Playwright version used
+# here; a project pinned to a different Playwright version can point
+# PLAYWRIGHT_BROWSERS_PATH at its own browser directory or run
+# `playwright install chromium` in the container.
 #
-# The install below bakes the project-matched Chromium browser into
-# /opt/playwright-browsers. Do not use --with-deps: Wolfi has no apt, so
-# Playwright's system dependency installer cannot run here.
+# Do not use --with-deps: Wolfi has no apt, so Playwright's system dependency
+# installer cannot run here.
 #
 # Wolfi is a rolling distribution, so package versions are intentionally not
 # pinned; rebuilding refreshes them along with the base image.
