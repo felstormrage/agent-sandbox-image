@@ -13,6 +13,14 @@ model. It does not create the cluster's Kubernetes resources. See
 [`kairos/README.md`](kairos/README.md) for build, AuroraBoot, installation,
 and verification instructions.
 
+## Repository layout
+
+- `.github/workflows/build.yml` builds, publishes, and packages both image
+  families.
+- `opencode/` contains the minimal and CMS sandbox Dockerfiles.
+- `kairos/` contains the host Dockerfile, root filesystem overlays, installer
+  configuration, verification script, and host-specific documentation.
+
 ## OpenCode sandbox image
 
 Minimal [OpenCode](https://opencode.ai) sandbox image built on
@@ -168,9 +176,13 @@ are tagged with `latest` (on the default branch), the branch name, semver tags,
 `-cms` suffix, plus `cms-latest` on the default branch.
 
 The independent `build-kairos` job builds the expected mini-PC `linux/amd64`
-host image from `kairos.Dockerfile`. It publishes `kairos-latest`,
+host image from `kairos/Dockerfile`. It publishes `kairos-latest`,
 `kairos-<version>`, branch/PR, and commit-specific tags. The Kairos job does not
-depend on either OpenCode sandbox image.
+depend on either OpenCode sandbox image. On non-PR runs it also uses AuroraBoot
+to create and upload a bootable `kairos-<version>-amd64.iso` plus a checksum as a
+workflow artifact for Proxmox or other hypervisor installation. See
+[`kairos/README.md`](kairos/README.md#install-in-proxmox) for the download and
+installation flow.
 
 If the GHCR package is private after the first publish, change its visibility in
 the package settings if you want anonymous pulls.

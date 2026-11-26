@@ -200,7 +200,7 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
             version="${GITHUB_REF_NAME#v}"
           else
-            base="$(sed -n 's/^ARG VERSION=//p' kairos.Dockerfile | head -n1)"
+            base="$(sed -n 's/^ARG VERSION=//p' kairos/Dockerfile | head -n1)"
             IFS=. read -r major minor patch <<< "${base}"
             # Advance the patch with the monotonic workflow counter, then retain
             # the commit as a prerelease identifier for uniqueness and tracing.
@@ -245,7 +245,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: kairos.Dockerfile
+          file: kairos/Dockerfile
           # The mini PC is amd64. The Dockerfile remains arm64-capable for a
           # native arm64 build without cross-emulating the large Kata archive.
           platforms: linux/amd64
@@ -258,3 +258,37 @@ jobs:
           cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max,scope=kairos-host' || '' }}
           provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
           sbom: ${{ github.event_name != 'pull_request' }}
+
+      # Publish a bootable installer after the OCI image is available in GHCR.
+      # Pull-request builds intentionally skip this because they do not publish
+      # the image that AuroraBoot needs to consume.
+      - name: Build bootable ISO
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:kairos-${{ steps.image.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE_REF"
+          mkdir -p build/artifacts
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/build:/tmp/auroraboot" \
+            quay.io/kairos/auroraboot:v4.7.0 \
+            --set "container_image=oci:${IMAGE_REF}" \
+            --set disable_http_server=true \
+            --set disable_netboot=true \
+            --set state_dir=/tmp/auroraboot
+          sudo chown -R "$(id -u):$(id -g)" build
+          iso="build/artifacts/kairos-${{ steps.image.outputs.version }}-amd64.iso"
+          install -m 0644 build/iso/kairos.iso "$iso"
+          (cd build/artifacts && sha256sum "$(basename "$iso")" > SHA256SUMS)
+
+      - name: Upload Kairos ISO artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kairos-${{ steps.image.outputs.version }}-amd64-iso
+          path: build/artifacts
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

@@ -23,7 +23,7 @@ The amd64 build is the expected mini-PC path:
 ```sh
 docker build \
   --platform linux/amd64 \
-  -f kairos.Dockerfile \
+  -f kairos/Dockerfile \
   --build-arg VERSION=0.1.0 \
   -t ghcr.io/felstormrage/agent-sandbox-image:kairos-0.1.0 \
   .
@@ -33,7 +33,7 @@ The Dockerfile also selects the matching arm64 gVisor and Kata archives when
 built natively on arm64, or with BuildKit emulation:
 
 ```sh
-docker build --platform linux/arm64 -f kairos.Dockerfile -t kairos-homelab:arm64 .
+docker build --platform linux/arm64 -f kairos/Dockerfile -t kairos-homelab:arm64 .
 ```
 
 Kata's static archive is roughly 1 GB compressed, so allow several GB of free
@@ -51,22 +51,22 @@ version. Branch, scheduled, and manual builds advance the patch component of
 `ARG VERSION` with the monotonic workflow run number and append the commit,
 ensuring Kairos sees each rebuild as a distinct, increasing upgrade artifact.
 
-## Install and configure
+## Install in Proxmox
 
-The image is an OCI system artifact, not an ISO. Use AuroraBoot with this image
-when creating bootable media. Keep node-specific configuration outside this
-repository (especially in the platform repository):
+Each non-PR GitHub Actions build publishes a bootable `amd64` ISO artifact named
+`kairos-<version>-amd64-iso`. Download it from the run's **Artifacts** section
+and extract the `.zip`; the ZIP contains the ISO and `SHA256SUMS`. Upload the
+extracted ISO to the Proxmox ISO library, attach it to a VM, enable CPU
+virtualization passthrough for Kata, and select
+**kairos (interactive install)** at boot.
+
+The ISO is deliberately a generic live installer and does not contain SSH keys,
+passwords, cluster tokens, or production-specific settings. Use the interactive
+installer or the Proxmox console to provide your node configuration. To verify
+the downloaded artifact before uploading it:
 
 ```sh
-docker run --rm -ti \
-  -v "$PWD/build:/tmp/auroraboot" \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  quay.io/kairos/auroraboot:v4.7.0 \
-  --set container_image=ghcr.io/felstormrage/agent-sandbox-image:kairos-latest \
-  --set disable_http_server=true \
-  --set disable_netboot=true \
-  --cloud-config /path/to/platform/cloud-config.yaml \
-  --set state_dir=/tmp/auroraboot
+sha256sum -c SHA256SUMS
 ```
 
 `cloud-config.example.yaml` shows the expected single-node k3s flags. Copy it to
@@ -75,6 +75,26 @@ configuration there, and do not commit cluster tokens or kubeconfigs. The
 example disables Flannel and k3s's bundled Traefik/ServiceLB because Cilium and
 the shared ingress/load-balancer responsibilities belong to the platform
 Alchemy stack.
+
+## Build a custom ISO locally
+
+The OCI image is not itself an ISO. To create an unattended installer with
+site-specific configuration embedded, pass a completed cloud config to
+AuroraBoot. Keep node-specific configuration outside this repository (especially
+in the platform repository):
+
+```sh
+docker run --rm -ti \
+  -v "$PWD/build:/tmp/auroraboot" \
+  -v "$PWD/cloud-config.yaml:/cloud-config.yaml:ro" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  quay.io/kairos/auroraboot:v4.7.0 \
+  --set "container_image=oci:ghcr.io/felstormrage/agent-sandbox-image:kairos-latest" \
+  --set disable_http_server=true \
+  --set disable_netboot=true \
+  --cloud-config /cloud-config.yaml \
+  --set state_dir=/tmp/auroraboot
+```
 
 ## Host prerequisites
 
