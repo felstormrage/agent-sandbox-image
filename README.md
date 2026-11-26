@@ -1,5 +1,20 @@
 # agent-sandbox-image
 
+This repository builds two independent image families:
+
+- **OpenCode sandbox containers** (`latest` and `cms-latest`) for disposable
+  application workspaces.
+- **Kairos homelab host images** (`kairos-latest`) containing Ubuntu 24.04,
+  Kairos, a pinned k3s provider, gVisor, and Kata runtime prerequisites for the
+  mini-PC cluster.
+
+The Kairos image is the host/OS artifact described by the platform ownership
+model. It does not create the cluster's Kubernetes resources. See
+[`kairos/README.md`](kairos/README.md) for build, AuroraBoot, installation,
+and verification instructions.
+
+## OpenCode sandbox image
+
 Minimal [OpenCode](https://opencode.ai) sandbox image built on
 [Chainguard's Wolfi base](https://images.chainguard.dev/directory/image/wolfi-base/overview).
 
@@ -141,16 +156,21 @@ msb run -t --name "$project_name" --replace \
 
 ## CI
 
-`.github/workflows/build.yml` builds `linux/amd64` and `linux/arm64` images and
-pushes them to GHCR on pushes to `main`, version tags, manual runs, and a weekly
-schedule. Pull requests build without pushing.
+`.github/workflows/build.yml` builds both image families and pushes them to GHCR
+on pushes to `main`, version tags, manual runs, and a weekly schedule. Pull
+requests build without pushing.
 
-The `build` job produces the minimal image; the `build-cms` job then layers
-`cms.Dockerfile` on top of that run's `opencode-<version>` tag (or `:latest` for
-pull requests). Minimal images are tagged with `latest` (on the default branch),
-the branch name, semver tags, `opencode-<version>`, and the commit SHA. CMS
-images mirror those tags with a `-cms` suffix, plus `cms-latest` on the default
-branch.
+The `build` job produces the minimal `linux/amd64` and `linux/arm64` sandbox;
+the `build-cms` job then layers `cms.Dockerfile` on that run's
+`opencode-<version>` tag (or `:latest` for pull requests). Minimal sandbox images
+are tagged with `latest` (on the default branch), the branch name, semver tags,
+`opencode-<version>`, and the commit SHA. CMS images mirror those tags with a
+`-cms` suffix, plus `cms-latest` on the default branch.
+
+The independent `build-kairos` job builds the expected mini-PC `linux/amd64`
+host image from `kairos.Dockerfile`. It publishes `kairos-latest`,
+`kairos-<version>`, branch/PR, and commit-specific tags. The Kairos job does not
+depend on either OpenCode sandbox image.
 
 If the GHCR package is private after the first publish, change its visibility in
 the package settings if you want anonymous pulls.

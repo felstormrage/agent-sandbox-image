@@ -1,0 +1,14 @@
+# K3s 2.x containerd template. Keep K3s's generated base configuration and
+# add only the alternate sandbox runtimes.
+{{ template "base" . }}
+
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runsc]
+  runtime_type = "io.containerd.runsc.v1"
+
+[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-qemu]
+  runtime_type = "io.containerd.kata.v2"
+  privileged_without_host_devices = true
+  pod_annotations = ["io.katacontainers.*"]
+
+  [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata-qemu.options]
+    ConfigPath = "/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-runtime-rs.toml"

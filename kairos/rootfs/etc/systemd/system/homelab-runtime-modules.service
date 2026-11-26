@@ -1,0 +1,13 @@
+[Unit]
+Description=Load homelab sandbox runtime kernel modules
+DefaultDependencies=no
+After=systemd-modules-load.service
+Before=k3s.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/load-homelab-modules
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
