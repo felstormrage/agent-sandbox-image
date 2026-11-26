@@ -5,14 +5,14 @@
 # Extends the minimal OpenCode sandbox with the shared libraries Chromium needs
 # at runtime, plus Playwright and cloudflared. Build the minimal image first:
 #
-#   docker build -f minimal.Dockerfile -t opencode-sandbox .
-#   docker build -f cms.Dockerfile \
+#   docker build -f opencode/minimal.Dockerfile -t opencode-sandbox .
+#   docker build -f opencode/cms.Dockerfile \
 #     --build-arg BASE_IMAGE=opencode-sandbox:latest -t opencode-cms .
 #
-# The default base is the published minimal image, so cms.Dockerfile also
+# The default base is the published minimal image, so the CMS Dockerfile also
 # builds on its own:
 #
-#   docker build -f cms.Dockerfile -t opencode-cms .
+#   docker build -f opencode/cms.Dockerfile -t opencode-cms .
 ARG BASE_IMAGE=ghcr.io/felstormrage/agent-sandbox-image:latest
 FROM ${BASE_IMAGE}
 

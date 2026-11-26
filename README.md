@@ -23,7 +23,7 @@ The image contains `opencode` plus the tools it expects at runtime: `bash`,
 not include Node.js, compilers, or language runtimes; extend it if your
 projects need those.
 
-`cms.Dockerfile` is a variant that extends the minimal image with Chromium's
+`opencode/cms.Dockerfile` is a variant that extends the minimal image with Chromium's
 runtime libraries, [Playwright](https://playwright.dev), and
 [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/).
 (The Playwright package brings in Node.js.)
@@ -40,10 +40,10 @@ docker pull ghcr.io/felstormrage/agent-sandbox-image:cms-latest
 ## Build
 
 ```sh
-docker build -f minimal.Dockerfile -t opencode-sandbox .
+docker build -f opencode/minimal.Dockerfile -t opencode-sandbox .
 
 # Install a different OpenCode release
-docker build -f minimal.Dockerfile \
+docker build -f opencode/minimal.Dockerfile \
   --build-arg OPENCODE_VERSION=2.2.6 \
   -t opencode-sandbox .
 ```
@@ -53,31 +53,31 @@ Multi-arch build:
 ```sh
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -f minimal.Dockerfile \
+  -f opencode/minimal.Dockerfile \
   -t opencode-sandbox .
 ```
 
 The OpenCode version is pinned by `ARG OPENCODE_VERSION` in
-`minimal.Dockerfile`. Bump it to upgrade.
+`opencode/minimal.Dockerfile`. Bump it to upgrade.
 
 To pin the Chainguard base by digest for a reproducible build, override
 `WOLFI_BASE`:
 
 ```sh
-docker build -f minimal.Dockerfile \
+docker build -f opencode/minimal.Dockerfile \
   --build-arg WOLFI_BASE=cgr.dev/chainguard/wolfi-base@sha256:<digest> \
   -t opencode-sandbox .
 ```
 
 ### CMS variant
 
-`cms.Dockerfile` builds on the minimal image. To use a local minimal build,
+`opencode/cms.Dockerfile` builds on the minimal image. To use a local minimal build,
 build it first and pass it as `BASE_IMAGE` (the default is the published
 minimal image):
 
 ```sh
-docker build -f minimal.Dockerfile -t opencode-sandbox .
-docker build -f cms.Dockerfile \
+docker build -f opencode/minimal.Dockerfile -t opencode-sandbox .
+docker build -f opencode/cms.Dockerfile \
   --build-arg BASE_IMAGE=opencode-sandbox:latest \
   -t opencode-cms .
 ```
@@ -85,7 +85,7 @@ docker build -f cms.Dockerfile \
 Or build against the published minimal image without a local base:
 
 ```sh
-docker build -f cms.Dockerfile -t opencode-cms .
+docker build -f opencode/cms.Dockerfile -t opencode-cms .
 ```
 
 Chromium is baked into the CMS image at `/opt/playwright-browsers`, which is the
@@ -161,7 +161,7 @@ on pushes to `main`, version tags, manual runs, and a weekly schedule. Pull
 requests build without pushing.
 
 The `build` job produces the minimal `linux/amd64` and `linux/arm64` sandbox;
-the `build-cms` job then layers `cms.Dockerfile` on that run's
+the `build-cms` job then layers `opencode/cms.Dockerfile` on that run's
 `opencode-<version>` tag (or `:latest` for pull requests). Minimal sandbox images
 are tagged with `latest` (on the default branch), the branch name, semver tags,
 `opencode-<version>`, and the commit SHA. CMS images mirror those tags with a
@@ -178,5 +178,5 @@ the package settings if you want anonymous pulls.
 ### Base image note
 
 Chainguard's `wolfi-base` points `apk` at `apk.cgr.dev/chainguard`, which
-requires Chainguard credentials. `minimal.Dockerfile` switches the repository to
+requires Chainguard credentials. `opencode/minimal.Dockerfile` switches the repository to
 the public `https://packages.wolfi.dev/os` so CI builds work without secrets.
