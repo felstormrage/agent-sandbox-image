@@ -280,11 +280,11 @@ jobs:
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${IMAGE}@${DIGEST}"
 
-      - name: Install qemu-img
+      - name: Install qemu and OVMF
         if: github.event_name != 'pull_request'
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-utils
+          sudo apt-get install -y qemu-utils qemu-system-x86 ovmf expect
 
       # Publish a pre-installed qcow2 after the OCI image is available in GHCR.
       # Pull-request builds intentionally skip this because they do not publish
@@ -338,6 +338,7 @@ jobs:
           qemu-img convert -c -f raw -O qcow2 "${raw}" "${qcow}"
           qemu-img info "${qcow}"
           qemu-img check "${qcow}"
+          ./scripts/smoke-test-qcow2.sh "${qcow}" "${password}" kairos
           rm -rf build/kairos build/kairos-cloud-config.yaml
 
           printf 'user: nithin\npassword: %s\n' "${password}" > build/artifacts/credentials.txt
@@ -468,11 +469,11 @@ jobs:
           fi
           echo "ref=${ref}" >> "$GITHUB_OUTPUT"
 
-      - name: Install podman and qemu-img
+      - name: Install podman, qemu, and OVMF
         if: github.event_name != 'pull_request'
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman qemu-utils
+          sudo apt-get install -y podman qemu-utils qemu-system-x86 ovmf expect
 
       - name: Build Fedora minimal qcow2
         if: github.event_name != 'pull_request'
@@ -525,6 +526,7 @@ jobs:
           install -m 0644 "${qcow}" "${output}"
           qemu-img info "${output}"
           qemu-img check "${output}"
+          ./scripts/smoke-test-qcow2.sh "${output}" "${password}" fedora
           rm -rf build/fedora-minimal build/fedora-minimal-config.toml
 
           printf 'user: nithin\npassword: %s\n' "${password}" > build/artifacts/credentials.txt
