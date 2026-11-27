@@ -53,7 +53,8 @@ RUN set -eux; \
     arch="$(uname -m)"; \
     [ "${arch}" = "x86_64" ] || { echo "gVisor is only wired for x86_64" >&2; exit 1; }; \
     url="https://storage.googleapis.com/gvisor/releases/release/${GVISOR_RELEASE}/${arch}"; \
-    curl --proto '=https' --tlsv1.2 -fsSL "${url}/gvisor.tar.zstd" -o /tmp/gvisor.tar.zstd; \
+    curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL \
+        "${url}/gvisor.tar.zstd" -o /tmp/gvisor.tar.zstd; \
     echo "${GVISOR_SHA512}  /tmp/gvisor.tar.zstd" | sha512sum -c -; \
     zstd -d -c /tmp/gvisor.tar.zstd | tar -xf - -C /usr/local/bin; \
     rm -f /tmp/gvisor.tar.zstd; \
@@ -72,7 +73,7 @@ RUN set -eux; \
     arch="$(uname -m)"; \
     [ "${arch}" = "x86_64" ] || { echo "Firecracker is only wired for x86_64" >&2; exit 1; }; \
     asset="firecracker-${FIRECRACKER_VERSION}-${arch}.tgz"; \
-    curl --proto '=https' --tlsv1.2 -fsSL \
+    curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL \
         "https://github.com/firecracker-microvm/firecracker/releases/download/${FIRECRACKER_VERSION}/${asset}" \
         -o "/tmp/${asset}"; \
     echo "${FIRECRACKER_SHA256}  /tmp/${asset}" | sha256sum -c -; \
@@ -93,7 +94,8 @@ RUN mkdir -p /usr/lib/sysctl.d && \
 RUN set -eux; \
     arch="$(uname -m)"; \
     [ "${arch}" = "x86_64" ] || { echo "cosign is only wired for x86_64" >&2; exit 1; }; \
-    curl -fsSL "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64" \
+    curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL \
+        "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64" \
         -o /usr/bin/cosign; \
     echo "${COSIGN_SHA256}  /usr/bin/cosign" | sha256sum -c -; \
     chmod 0755 /usr/bin/cosign; \
