@@ -151,14 +151,60 @@ RestartSec=2min
 WantedBy=multi-user.target
 EOF
 
-# 9. Wire Homebrew and zoxide into fish automatically. Vendor snippets live
+# 9. Remove units and drop-ins that older images baked into persistent /etc.
+# The new copies live under /usr/lib and must not be shadowed by stale /etc
+# files after an upgrade.
+RUN cat <<'EOF' > /usr/bin/fedora-minimal-legacy-cleanup
+#!/bin/bash
+set -euo pipefail
+
+changed=0
+for path in \
+    /etc/systemd/system/brew-firstboot.service \
+    /etc/systemd/system/ssh-sync-firstboot.service \
+    /etc/systemd/system/multi-user.target.wants/brew-firstboot.service \
+    /etc/systemd/system/multi-user.target.wants/ssh-sync-firstboot.service \
+    /etc/systemd/system/bootc-fetch-apply-updates.timer.d/override.conf; do
+    if [[ -e "${path}" || -L "${path}" ]]; then
+        rm -f "${path}"
+        changed=1
+    fi
+done
+
+if [[ "${changed}" -eq 1 ]]; then
+    /usr/bin/systemctl daemon-reload
+    /usr/bin/systemctl enable \
+        brew-firstboot.service \
+        ssh-sync-firstboot.service
+fi
+EOF
+
+RUN chmod 0755 /usr/bin/fedora-minimal-legacy-cleanup
+
+RUN cat <<'EOF' > /usr/lib/systemd/system/fedora-minimal-legacy-cleanup.service
+[Unit]
+Description=Remove legacy Fedora minimal host units from persistent /etc
+After=local-fs.target
+Before=multi-user.target brew-firstboot.service ssh-sync-firstboot.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/fedora-minimal-legacy-cleanup
+TimeoutStartSec=2min
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 10. Wire Homebrew and zoxide into fish automatically. Vendor snippets live
 # under /usr so they travel with image upgrades.
 RUN mkdir -p /usr/share/fish/vendor_conf.d && \
     echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /usr/share/fish/vendor_conf.d/brew.fish && \
     echo 'zoxide init fish | source' > /usr/share/fish/vendor_conf.d/zoxide.fish
 
-# 10. Enable required services and timers, and disable kdump on small VMs.
+# 11. Enable required services and timers, and disable kdump on small VMs.
 RUN systemctl enable \
+    fedora-minimal-legacy-cleanup.service \
     bootc-fetch-apply-updates.timer \
     qemu-guest-agent.service \
     sshd.service \
@@ -170,5 +216,5 @@ RUN systemctl enable \
     fail2ban.service && \
     (systemctl disable kdump.service 2>/dev/null || true)
 
-# 11. Validate the bootc image layout and configuration.
+# 12. Validate the bootc image layout and configuration.
 RUN bootc container lint

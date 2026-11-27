@@ -38,6 +38,10 @@ sudo bootc rollback
 sudo reboot
 ```
 
+Upgrades from images that kept the firstboot units in persistent `/etc/systemd`
+are migrated by `fedora-minimal-legacy-cleanup.service` on the first boot. It
+removes the stale units and re-enables the `/usr/lib` versions.
+
 ## Build
 
 ```sh
