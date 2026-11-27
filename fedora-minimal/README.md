@@ -11,7 +11,8 @@ Included:
   related CLI tools
 - Homebrew installed on first boot into `/home/linuxbrew`
 - SSH key sync installed on first boot
-- Serial console on `ttyS0` and root SSH login disabled
+- Key-only SSH, root SSH login disabled, and firewalld allowing only SSH
+- Serial console on `ttyS0`
 - 200 MB journald cap
 
 Updates are applied by bootc:
@@ -52,11 +53,12 @@ The artifact ZIP contains:
 - `SHA256SUMS`
 - `credentials.txt` with the `nithin` password for this run
 
-Set the repository secret `HOST_PASSWORD` to use a fixed password. If it is not
-set, each run generates a random password and records it in `credentials.txt`.
-To change the user or groups, edit `config.toml`; CI replaces
-`__PASSWORD_HASH__` with a SHA-512 password hash before invoking
-`bootc-image-builder`.
+Set the repository secret `HOST_PASSWORD` to use a fixed console password. If it
+is not set, each run generates a random password and records it in
+`credentials.txt`. SSH is key-only: set the repository secret
+`HOST_SSH_PUBLIC_KEY` to the public key that should be authorized for `nithin`.
+CI replaces `__PASSWORD_HASH__` and `__SSH_PUBLIC_KEY__` before invoking
+`bootc-image-builder`. To change the user or groups, edit `config.toml`.
 
 ## Boot in Proxmox
 
@@ -64,8 +66,10 @@ To change the user or groups, edit `config.toml`; CI replaces
 2. Import the qcow2 disk with `qm importdisk`, or attach it as a SATA/SCSI disk.
 3. Use OVMF/UEFI, CPU type `host`, and a serial console on `ttyS0`.
 4. Give the VM at least 2 GB of RAM and 10 GB of disk.
-5. Log in as `nithin` with the password from `credentials.txt`. The first boot
-   installs Homebrew and the SSH key sync service.
+5. Log in at the serial console as `nithin` with the password from
+   `credentials.txt`, or over SSH with the key configured in
+   `HOST_SSH_PUBLIC_KEY`. The first boot installs Homebrew and the SSH key sync
+   service.
 
 This image does not include Podman, gVisor, or Firecracker and does not require
 KVM; use the Kairos image when you need those.

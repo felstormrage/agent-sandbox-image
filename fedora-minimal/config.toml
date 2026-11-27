@@ -11,5 +11,15 @@
 name = "nithin"
 description = "Sandbox administrator"
 password = "__PASSWORD_HASH__"
+key = "__SSH_PUBLIC_KEY__"
 groups = ["wheel"]
 shell = "/usr/bin/fish"
+
+[customizations.sshd]
+password_authentication = false
+kbd_interactive_authentication = false
+client_alive_interval = 300
+permit_root_login = "no"
+
+[customizations.firewall.services]
+enabled = ["ssh"]
