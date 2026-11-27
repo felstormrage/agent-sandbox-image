@@ -1,0 +1,31 @@
+#cloud-config
+# The CI workflow replaces the password-hash placeholder with a per-run hash.
+# For a local build, generate one with:
+#
+#   openssl passwd -6
+#
+# and substitute it before passing this file to AuroraBoot or baking it into a
+# qcow2 image.
+
+hostname: kairos-{{ trunc 4 .MachineID }}
+
+users:
+  - name: nithin
+    passwd: "__PASSWORD_HASH__"
+    lock_passwd: false
+    shell: /usr/bin/fish
+    groups:
+      - wheel
+      - kvm
+    sudo: ALL=(ALL) NOPASSWD:ALL
+
+ssh_pwauth: true
+
+# The weekly qcow2 artifact is already installed, so this block stays disabled.
+# Uncomment it when using this cloud config to build an unattended installer
+# ISO instead:
+#
+# install:
+#   auto: true
+#   reboot: true
+#   device: "auto"

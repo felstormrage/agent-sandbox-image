@@ -1,0 +1,142 @@
+# syntax=docker/dockerfile:1
+
+# Kairos "bring your own image" sandbox host.
+#
+# Kairos and bootc are competing immutable-OS frameworks: both own the
+# bootloader, initramfs, A/B updates, and upgrade agent. This image therefore
+# starts from plain Fedora and lets kairos-init turn it into a Kairos system.
+# It does not layer Kairos on top of fedora-bootc.
+ARG KAIROS_INIT_VERSION=v4.7.0
+FROM quay.io/kairos/kairos-init:${KAIROS_INIT_VERSION} AS kairos-init
+
+# hadolint ignore=DL3007
+FROM fedora:latest
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG VERSION=0.1.0
+
+LABEL org.opencontainers.image.title="kairos-sandbox" \
+      org.opencontainers.image.description="Fedora-based Kairos sandbox host with gVisor, Firecracker, Podman, Homebrew, and SSH key sync" \
+      org.opencontainers.image.version="${VERSION}"
+
+# 1. Install the Kairos OS, boot support, and immutable-system services.
+# Add --provider k3s if you want Kairos to bundle Kubernetes.
+COPY --from=kairos-init /kairos-init /kairos-init
+RUN /kairos-init -l info -s install
+
+# 2. Core system, virtualization/container runtime, networking, and CLI tools.
+# hadolint ignore=DL3041
+RUN set -eux; \
+    dnf -y install \
+        qemu-guest-agent \
+        podman containernetworking-plugins nftables iproute jq \
+        curl wget fish tmux sudo openssh-server tar \
+        bat ripgrep fd-find du-dust procs eza zoxide btop neovim \
+        git gcc make patch unzip bzip2 which zlib-devel procps-ng file; \
+    dnf clean all
+
+# 3. Install gVisor (runsc + containerd shim).
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    url="https://storage.googleapis.com/gvisor/releases/release/latest/${arch}"; \
+    curl -fsSL "${url}/runsc" -o /usr/local/bin/runsc; \
+    curl -fsSL "${url}/containerd-shim-runsc-v1" -o /usr/local/bin/containerd-shim-runsc-v1; \
+    chmod 0755 /usr/local/bin/runsc /usr/local/bin/containerd-shim-runsc-v1
+
+# 4. Register gVisor (runsc) as an OCI runtime in Podman.
+RUN mkdir -p /etc/containers/containers.conf.d && \
+    cat <<'EOF' > /etc/containers/containers.conf.d/gvisor.conf
+[engine.runtimes]
+runsc = ["/usr/local/bin/runsc"]
+EOF
+
+# 5. Install Firecracker and Jailer (latest GitHub release).
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    latest="$(curl -fsSL https://api.github.com/repos/firecracker-microvm/firecracker/releases/latest | jq -r .tag_name)"; \
+    curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/download/${latest}/firecracker-${latest}-${arch}.tgz" \
+        | tar -xz -C /tmp; \
+    mv "/tmp/release-${latest}-${arch}/firecracker-${latest}-${arch}" /usr/local/bin/firecracker; \
+    mv "/tmp/release-${latest}-${arch}/jailer-${latest}-${arch}" /usr/local/bin/jailer; \
+    chmod 0755 /usr/local/bin/firecracker /usr/local/bin/jailer; \
+    rm -rf /tmp/release-*
+
+# 6. Enable IPv4 forwarding for Firecracker TAP/NAT networking.
+RUN mkdir -p /etc/sysctl.d && \
+    echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-firecracker.conf
+
+# 7. Harden SSH (disable root login) and cap journald log size at 200M.
+RUN mkdir -p /etc/ssh/sshd_config.d /etc/systemd/journald.conf.d && \
+    echo 'PermitRootLogin no' > /etc/ssh/sshd_config.d/99-hardening.conf && \
+    printf '[Journal]\nSystemMaxUse=200M\n' > /etc/systemd/journald.conf.d/size.conf
+
+# 8. Prepare the sandbox user's sudo access and KVM group. The user itself is
+# created by cloud-config at install/boot time, so its password and home land on
+# the machine-local filesystem rather than in an immutable image layer.
+RUN set -eux; \
+    groupadd -f kvm; \
+    mkdir -p /etc/sudoers.d; \
+    echo 'nithin ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/nithin; \
+    chmod 0440 /etc/sudoers.d/nithin
+
+# 9. Auto-install Homebrew on first boot into /home/linuxbrew.
+RUN cat <<'EOF' > /etc/systemd/system/brew-firstboot.service
+[Unit]
+Description=Install Homebrew on first boot
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/home/linuxbrew/.linuxbrew/bin/brew
+
+[Service]
+Type=oneshot
+User=nithin
+Environment=NONINTERACTIVE=1
+ExecStartPre=/usr/bin/sudo /usr/bin/install -d -o nithin -g nithin /home/linuxbrew
+ExecStart=/bin/bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 10. Run the SSH key sync installer once on first boot.
+RUN cat <<'EOF' > /etc/systemd/system/ssh-sync-firstboot.service
+[Unit]
+Description=Install SSH key sync on first boot
+After=network-online.target systemd-user-sessions.service
+Wants=network-online.target
+ConditionPathExists=!/var/lib/ssh-sync-firstboot.done
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -ec '\
+  UID_N=$(id -u nithin); \
+  loginctl enable-linger nithin; \
+  systemctl start "user@${UID_N}.service"; \
+  sudo -u nithin \
+    HOME=/home/nithin \
+    XDG_RUNTIME_DIR="/run/user/${UID_N}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${UID_N}/bus" \
+    bash -c "set -o pipefail; curl -fsSL https://raw.githubusercontent.com/felstormrage/scripts/main/install-ssh-sync.sh | bash"; \
+  touch /var/lib/ssh-sync-firstboot.done'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 11. Wire Homebrew and zoxide into fish automatically.
+RUN mkdir -p /etc/fish/conf.d && \
+    echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /etc/fish/conf.d/brew.fish && \
+    echo 'zoxide init fish | source' > /etc/fish/conf.d/zoxide.fish
+
+# 12. Enable required services.
+RUN systemctl enable \
+    qemu-guest-agent.service \
+    sshd.service \
+    serial-getty@ttyS0.service \
+    brew-firstboot.service \
+    ssh-sync-firstboot.service
+
+# 13. Finalize the Kairos initramfs and OS metadata after all custom files and
+# runtime assets are in place.
+RUN /kairos-init -l info -s init && rm /kairos-init

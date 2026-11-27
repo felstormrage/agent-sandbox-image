@@ -1,25 +1,28 @@
 # agent-sandbox-image
 
-This repository builds two independent image families:
+This repository builds three image families:
 
 - **OpenCode sandbox containers** (`latest` and `cms-latest`) for disposable
   application workspaces.
-- **Kairos homelab host images** (`kairos-latest`) containing Ubuntu 24.04,
-  Kairos, a pinned k3s provider, gVisor, and Kata runtime prerequisites for the
-  mini-PC cluster.
+- **Kairos full sandbox host** (`kairos-latest`), a Fedora-based Kairos BYOI
+  image with Podman, gVisor, Firecracker, Homebrew, and SSH key sync.
+- **Fedora minimal bootc host** (`fedora-minimal-latest`), the same sandbox
+  tooling without the container/virtualization stack.
 
-The Kairos image is the host/OS artifact described by the platform ownership
-model. It does not create the cluster's Kubernetes resources. See
-[`kairos/README.md`](kairos/README.md) for build, AuroraBoot, installation,
-and verification instructions.
+The two host images are separate from the OpenCode containers and each lives in
+its own folder. Both are rebuilt weekly with buildable qcow2 artifacts. See
+[`kairos/README.md`](kairos/README.md) and
+[`fedora-minimal/README.md`](fedora-minimal/README.md) for build, boot, and
+credential details.
 
 ## Repository layout
 
-- `.github/workflows/build.yml` builds, publishes, and packages both image
+- `.github/workflows/build.yml` builds, publishes, and packages all three image
   families.
 - `opencode/` contains the minimal and CMS sandbox Dockerfiles.
-- `kairos/` contains the host Dockerfile, root filesystem overlays, installer
-  configuration, verification script, and host-specific documentation.
+- `kairos/` contains the full Kairos host image and its cloud config.
+- `fedora-minimal/` contains the minimal bootc host image and its
+  `bootc-image-builder` config.
 
 ## OpenCode sandbox image
 
@@ -43,9 +46,15 @@ docker pull ghcr.io/felstormrage/agent-sandbox-image:latest
 
 # CMS variant (Chromium, Playwright, cloudflared)
 docker pull ghcr.io/felstormrage/agent-sandbox-image:cms-latest
+
+# Full Kairos sandbox host
+docker pull ghcr.io/felstormrage/agent-sandbox-image:kairos-latest
+
+# Minimal Fedora bootc sandbox host
+docker pull ghcr.io/felstormrage/agent-sandbox-image:fedora-minimal-latest
 ```
 
-## Build
+## Build the OpenCode sandbox
 
 ```sh
 docker build -f opencode/minimal.Dockerfile -t opencode-sandbox .
@@ -118,7 +127,36 @@ docker run --rm -it \
 Or install the project's browser in the container with
 `playwright install chromium`.
 
-## Run
+## Host images
+
+The host images are bootable OS artifacts, not container workspaces. Build
+their source OCI images locally with:
+
+```sh
+# Full Kairos host (Fedora + Kairos BYOI)
+docker build --platform linux/amd64 \
+  -f kairos/Containerfile \
+  --build-arg VERSION=0.1.0 \
+  -t agent-sandbox-kairos .
+
+# Minimal Fedora bootc host
+docker build --platform linux/amd64 \
+  -f fedora-minimal/Containerfile \
+  --build-arg VERSION=0.1.0 \
+  -t agent-sandbox-fedora-minimal .
+```
+
+Both images create a `nithin` user in `wheel` with passwordless sudo. The
+first boot installs Homebrew into `/home/linuxbrew` and installs the SSH key
+sync helper. The Kairos image also includes Podman, gVisor, and Firecracker;
+the Fedora minimal image keeps only bootc and the CLI tooling.
+
+Each host folder documents its qcow2 artifact, boot settings, and update path:
+
+- [`kairos/README.md`](kairos/README.md)
+- [`fedora-minimal/README.md`](fedora-minimal/README.md)
+
+## Run the OpenCode sandbox
 
 ```sh
 docker run --rm -it \
@@ -164,25 +202,34 @@ msb run -t --name "$project_name" --replace \
 
 ## CI
 
-`.github/workflows/build.yml` builds both image families and pushes them to GHCR
-on pushes to `main`, version tags, manual runs, and a weekly schedule. Pull
-requests build without pushing.
+`.github/workflows/build.yml` builds all three image families and pushes them to
+GHCR on pushes to `main`, version tags, manual runs, and a weekly schedule. Pull
+requests build without pushing or creating disk artifacts.
 
-The `build` job produces the minimal `linux/amd64` and `linux/arm64` sandbox;
-the `build-cms` job then layers `opencode/cms.Dockerfile` on that run's
+The `build` job produces the minimal multi-arch OpenCode sandbox; the
+`build-cms` job then layers `opencode/cms.Dockerfile` on that run's
 `opencode-<version>` tag (or `:latest` for pull requests). Minimal sandbox images
 are tagged with `latest` (on the default branch), the branch name, semver tags,
 `opencode-<version>`, and the commit SHA. CMS images mirror those tags with a
 `-cms` suffix, plus `cms-latest` on the default branch.
 
-The independent `build-kairos` job builds the expected mini-PC `linux/amd64`
-host image from `kairos/Dockerfile`. It publishes `kairos-latest`,
-`kairos-<version>`, branch/PR, and commit-specific tags. The Kairos job does not
-depend on either OpenCode sandbox image. On non-PR runs it also uses AuroraBoot
-to create and upload a bootable `kairos-<version>-amd64.iso` plus a checksum as a
-workflow artifact for Proxmox or other hypervisor installation. See
-[`kairos/README.md`](kairos/README.md#install-in-proxmox) for the download and
-installation flow.
+The independent host jobs build amd64 OCI images and, on non-PR runs, upload a
+pre-installed qcow2 disk for Proxmox or another hypervisor:
+
+- `build-kairos` publishes `kairos-latest`, `kairos-<version>`, branch/PR, and
+  commit tags, then uses AuroraBoot and `qemu-img` to create
+  `kairos-<version>-amd64.qcow2`.
+- `build-fedora-minimal` publishes `fedora-minimal-latest`,
+  `fedora-minimal-<version>`, branch/PR, and commit tags, then uses
+  `bootc-image-builder` to create
+  `fedora-minimal-<version>-amd64.qcow2`.
+
+Each artifact ZIP contains the qcow2, `SHA256SUMS`, and a `credentials.txt` for
+the `nithin` user. Set the repository secret `HOST_PASSWORD` to use a fixed
+password; otherwise each run generates a random one. See
+[`kairos/README.md`](kairos/README.md#weekly-qcow2-artifact) and
+[`fedora-minimal/README.md`](fedora-minimal/README.md#weekly-qcow2-artifact) for
+the download, boot, and update flow.
 
 If the GHCR package is private after the first publish, change its visibility in
 the package settings if you want anonymous pulls.

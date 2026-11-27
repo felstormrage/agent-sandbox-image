@@ -1,4 +1,4 @@
-name: Build sandbox image
+name: Build sandbox images
 
 on:
   push:
@@ -12,7 +12,8 @@ on:
         required: false
         type: string
   schedule:
-    # Weekly rebuild to pick up Chainguard base-image updates.
+    # Weekly rebuild to pick up base-image updates for OpenCode, Kairos, and
+    # the Fedora minimal bootc image, and to refresh both qcow2 artifacts.
     - cron: "17 4 * * 1"
 
 concurrency:
@@ -185,9 +186,9 @@ jobs:
           sbom: ${{ github.event_name != 'pull_request' }}
 
   build-kairos:
-    name: Build Kairos host image
+    name: Build Kairos image
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -200,7 +201,7 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
             version="${GITHUB_REF_NAME#v}"
           else
-            base="$(sed -n 's/^ARG VERSION=//p' kairos/Dockerfile | head -n1)"
+            base="$(sed -n 's/^ARG VERSION=//p' kairos/Containerfile | head -n1)"
             IFS=. read -r major minor patch <<< "${base}"
             # Advance the patch with the monotonic workflow counter, then retain
             # the commit as a prerelease identifier for uniqueness and tracing.
@@ -237,17 +238,17 @@ jobs:
             type=ref,event=pr,prefix=kairos-pr-
             type=sha,prefix=kairos-sha-
           labels: |
-            org.opencontainers.image.title=kairos-homelab-k3s
-            org.opencontainers.image.description=Kairos k3s host image with gVisor and Kata Containers runtime prerequisites
+            org.opencontainers.image.title=kairos-sandbox
+            org.opencontainers.image.description=Fedora-based Kairos sandbox host with gVisor, Firecracker, Podman, Homebrew, and SSH key sync
             org.opencontainers.image.version=${{ steps.image.outputs.version }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: kairos/Dockerfile
-          # The mini PC is amd64. The Dockerfile remains arm64-capable for a
-          # native arm64 build without cross-emulating the large Kata archive.
+          file: kairos/Containerfile
+          # The host image is amd64-only: it contains native gVisor and
+          # Firecracker binaries selected with uname -m at build time.
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -259,36 +260,207 @@ jobs:
           provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
           sbom: ${{ github.event_name != 'pull_request' }}
 
-      # Publish a bootable installer after the OCI image is available in GHCR.
+      - name: Install qemu-img
+        if: github.event_name != 'pull_request'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-utils
+
+      # Publish a pre-installed qcow2 after the OCI image is available in GHCR.
       # Pull-request builds intentionally skip this because they do not publish
       # the image that AuroraBoot needs to consume.
-      - name: Build bootable ISO
+      - name: Build Kairos qcow2
         if: github.event_name != 'pull_request'
         env:
           IMAGE_REF: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:kairos-${{ steps.image.outputs.version }}
+          HOST_PASSWORD: ${{ secrets.HOST_PASSWORD }}
         run: |
           set -euo pipefail
-          docker pull "$IMAGE_REF"
-          mkdir -p build/artifacts
-          docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "$PWD/build:/tmp/auroraboot" \
-            quay.io/kairos/auroraboot:v4.7.0 \
-            --set "container_image=oci:${IMAGE_REF}" \
-            --set disable_http_server=true \
-            --set disable_netboot=true \
-            --set state_dir=/tmp/auroraboot
-          sudo chown -R "$(id -u):$(id -g)" build
-          iso="build/artifacts/kairos-${{ steps.image.outputs.version }}-amd64.iso"
-          install -m 0644 build/iso/kairos.iso "$iso"
-          (cd build/artifacts && sha256sum "$(basename "$iso")" > SHA256SUMS)
+          docker pull "${IMAGE_REF}"
+          mkdir -p build/kairos build/artifacts
 
-      - name: Upload Kairos ISO artifact
+          password="${HOST_PASSWORD:-$(openssl rand -hex 16)}"
+          echo "::add-mask::${password}"
+          hash="$(printf '%s' "${password}" | openssl passwd -6 -stdin)"
+          sed "s|__PASSWORD_HASH__|${hash}|g" \
+            kairos/cloud-config.yaml > build/kairos-cloud-config.yaml
+
+          docker run --rm --privileged \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${PWD}/build/kairos:/aurora" \
+            -v "${PWD}/build/kairos-cloud-config.yaml:/cloud-config.yaml:ro" \
+            quay.io/kairos/auroraboot:v4.7.0 \
+            --debug \
+            --set "disable_http_server=true" \
+            --set "disable_netboot=true" \
+            --set "disk.efi=true" \
+            --set "container_image=oci:${IMAGE_REF}" \
+            --set "state_dir=/aurora" \
+            --cloud-config /cloud-config.yaml
+          sudo chown -R "$(id -u):$(id -g)" build
+
+          raw="$(find build/kairos -type f -name '*.raw' -print -quit)"
+          if [ -z "${raw}" ]; then
+            echo "AuroraBoot did not produce a raw disk image" >&2
+            find build/kairos -maxdepth 2 -type f >&2
+            exit 1
+          fi
+          qemu-img convert -c -f raw -O qcow2 "${raw}" \
+            "build/artifacts/kairos-${{ steps.image.outputs.version }}-amd64.qcow2"
+          rm -rf build/kairos build/kairos-cloud-config.yaml
+
+          printf 'user: nithin\npassword: %s\n' "${password}" > build/artifacts/credentials.txt
+          (cd build/artifacts && sha256sum ./*.qcow2 > SHA256SUMS)
+
+      - name: Upload Kairos qcow2 artifact
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: kairos-${{ steps.image.outputs.version }}-amd64-iso
+          name: kairos-${{ steps.image.outputs.version }}-amd64-qcow2
           path: build/artifacts
           if-no-files-found: error
-          compression-level: 0
+          retention-days: 30
+
+  build-fedora-minimal:
+    name: Build Fedora minimal image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image coordinates
+        id: image
+        run: |
+          set -euo pipefail
+          name="${GITHUB_REPOSITORY,,}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            base="$(sed -n 's/^ARG VERSION=//p' fedora-minimal/Containerfile | head -n1)"
+            IFS=. read -r major minor patch <<< "${base}"
+            patch=$((patch + GITHUB_RUN_NUMBER))
+            version="${major}.${minor}.${patch}-$(git rev-parse --short=7 HEAD)"
+          fi
+          if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid Fedora minimal image version: ${version}" >&2
+            exit 1
+          fi
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=fedora-minimal-${{ steps.image.outputs.version }}
+            type=raw,value=fedora-minimal-latest,enable={{is_default_branch}}
+            type=ref,event=branch,prefix=fedora-minimal-branch-
+            type=ref,event=pr,prefix=fedora-minimal-pr-
+            type=sha,prefix=fedora-minimal-sha-
+          labels: |
+            org.opencontainers.image.title=fedora-minimal-sandbox
+            org.opencontainers.image.description=Minimal Fedora bootc sandbox host with fish, Homebrew, and SSH key sync
+            org.opencontainers.image.version=${{ steps.image.outputs.version }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: fedora-minimal/Containerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.image.outputs.version }}
+          cache-from: type=gha,scope=fedora-minimal
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max,scope=fedora-minimal' || '' }}
+          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+          sbom: ${{ github.event_name != 'pull_request' }}
+
+      - name: Resolve qcow2 source
+        if: github.event_name != 'pull_request'
+        id: source
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/${{ steps.image.outputs.name }}:fedora-minimal-${{ steps.image.outputs.version }}"
+          # On the default branch, bake the latest tag into the disk so bootc
+          # fetches future weekly builds from the same moving reference.
+          if [ "${GITHUB_REF}" = "refs/heads/${{ github.event.repository.default_branch }}" ]; then
+            ref="${REGISTRY}/${{ steps.image.outputs.name }}:fedora-minimal-latest"
+          fi
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
+      - name: Install podman and qemu-img
+        if: github.event_name != 'pull_request'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman qemu-utils
+
+      - name: Build Fedora minimal qcow2
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE_REF: ${{ steps.source.outputs.ref }}
+          HOST_PASSWORD: ${{ secrets.HOST_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/fedora-minimal build/artifacts
+
+          password="${HOST_PASSWORD:-$(openssl rand -hex 16)}"
+          echo "::add-mask::${password}"
+          hash="$(printf '%s' "${password}" | openssl passwd -6 -stdin)"
+          sed "s|__PASSWORD_HASH__|${hash}|g" \
+            fedora-minimal/config.toml > build/fedora-minimal-config.toml
+
+          printf '%s' "${GH_TOKEN}" | sudo podman login ghcr.io \
+            -u "${{ github.actor }}" --password-stdin
+          sudo podman pull "${IMAGE_REF}"
+
+          sudo podman run --rm --privileged --pull=newer \
+            --security-opt label=disable \
+            -v "${PWD}/build/fedora-minimal-config.toml:/config.toml:ro" \
+            -v "${PWD}/build/fedora-minimal:/output" \
+            -v /var/lib/containers/storage:/var/lib/containers/storage \
+            quay.io/centos-bootc/bootc-image-builder:latest \
+            --type qcow2 \
+            --local \
+            --config /config.toml \
+            "${IMAGE_REF}"
+          sudo chown -R "$(id -u):$(id -g)" build
+
+          qcow="$(find build/fedora-minimal -type f -name '*.qcow2' -print -quit)"
+          if [ -z "${qcow}" ]; then
+            echo "bootc-image-builder did not produce a qcow2 image" >&2
+            find build/fedora-minimal -maxdepth 3 -type f >&2
+            exit 1
+          fi
+          install -m 0644 "${qcow}" \
+            "build/artifacts/fedora-minimal-${{ steps.image.outputs.version }}-amd64.qcow2"
+          rm -rf build/fedora-minimal build/fedora-minimal-config.toml
+
+          printf 'user: nithin\npassword: %s\n' "${password}" > build/artifacts/credentials.txt
+          (cd build/artifacts && sha256sum ./*.qcow2 > SHA256SUMS)
+
+      - name: Upload Fedora minimal qcow2 artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fedora-minimal-${{ steps.image.outputs.version }}-amd64-qcow2
+          path: build/artifacts
+          if-no-files-found: error
           retention-days: 30

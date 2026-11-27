@@ -1,0 +1,115 @@
+# syntax=docker/dockerfile:1
+
+# Minimal Fedora bootc sandbox host.
+#
+# This variant keeps the immutable bootc update path, serial console, fish,
+# Homebrew, and SSH key sync, but deliberately omits Podman, gVisor,
+# Firecracker, and the container-networking stack.
+# hadolint ignore=DL3007
+FROM quay.io/fedora/fedora-bootc:latest
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG VERSION=0.1.0
+
+LABEL org.opencontainers.image.title="fedora-minimal-sandbox" \
+      org.opencontainers.image.description="Minimal Fedora bootc sandbox host with fish, Homebrew, and SSH key sync" \
+      org.opencontainers.image.version="${VERSION}"
+
+# 1. Core system, CLI tools, fish, and Homebrew prerequisites.
+# hadolint ignore=DL3041
+RUN set -eux; \
+    dnf -y install \
+        qemu-guest-agent \
+        curl wget fish tmux sudo openssh-server \
+        bat ripgrep fd-find du-dust procs eza zoxide btop neovim \
+        git gcc make patch unzip bzip2 which zlib-devel procps-ng file; \
+    dnf clean all
+
+# 2. Bake the serial-console kernel arguments into bootc.
+RUN mkdir -p /usr/lib/bootc/kargs.d && \
+    cat <<'EOF' > /usr/lib/bootc/kargs.d/00-console.toml
+kargs = ["console=tty0", "console=ttyS0,115200n8"]
+match-architectures = ["x86_64"]
+EOF
+
+# 3. Tame bootc auto-updates to a 04:00 daily maintenance window.
+RUN mkdir -p /etc/systemd/system/bootc-fetch-apply-updates.timer.d && \
+    cat <<'EOF' > /etc/systemd/system/bootc-fetch-apply-updates.timer.d/override.conf
+[Timer]
+OnBootSec=
+OnUnitInactiveSec=
+OnCalendar=*-*-* 04:00:00
+RandomizedDelaySec=15m
+EOF
+
+# 4. Harden SSH (disable root login) and cap journald log size at 200M.
+RUN mkdir -p /etc/ssh/sshd_config.d /etc/systemd/journald.conf.d && \
+    echo 'PermitRootLogin no' > /etc/ssh/sshd_config.d/99-hardening.conf && \
+    printf '[Journal]\nSystemMaxUse=200M\n' > /etc/systemd/journald.conf.d/size.conf
+
+# 5. Permit passwordless sudo for the user created by config.toml. The user is
+# created at disk-build time by bootc-image-builder, not in the container layer,
+# so /home stays out of the immutable image.
+RUN mkdir -p /etc/sudoers.d && \
+    echo 'nithin ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/nithin && \
+    chmod 0440 /etc/sudoers.d/nithin
+
+# 6. Auto-install Homebrew on first boot into /home/linuxbrew. The directory is
+# created by the unit so it lives on the machine-local /var/home mount.
+RUN cat <<'EOF' > /etc/systemd/system/brew-firstboot.service
+[Unit]
+Description=Install Homebrew on first boot
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/home/linuxbrew/.linuxbrew/bin/brew
+
+[Service]
+Type=oneshot
+User=nithin
+Environment=NONINTERACTIVE=1
+ExecStartPre=/usr/bin/sudo /usr/bin/install -d -o nithin -g nithin /home/linuxbrew
+ExecStart=/bin/bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 7. Run the SSH key sync installer once on first boot.
+RUN cat <<'EOF' > /etc/systemd/system/ssh-sync-firstboot.service
+[Unit]
+Description=Install SSH key sync on first boot
+After=network-online.target systemd-user-sessions.service
+Wants=network-online.target
+ConditionPathExists=!/var/lib/ssh-sync-firstboot.done
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -ec '\
+  UID_N=$(id -u nithin); \
+  loginctl enable-linger nithin; \
+  systemctl start "user@${UID_N}.service"; \
+  sudo -u nithin \
+    HOME=/home/nithin \
+    XDG_RUNTIME_DIR="/run/user/${UID_N}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${UID_N}/bus" \
+    bash -c "set -o pipefail; curl -fsSL https://raw.githubusercontent.com/felstormrage/scripts/main/install-ssh-sync.sh | bash"; \
+  touch /var/lib/ssh-sync-firstboot.done'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 8. Wire Homebrew and zoxide into fish automatically.
+RUN mkdir -p /etc/fish/conf.d && \
+    echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /etc/fish/conf.d/brew.fish && \
+    echo 'zoxide init fish | source' > /etc/fish/conf.d/zoxide.fish
+
+# 9. Enable required services and timers.
+RUN systemctl enable \
+    bootc-fetch-apply-updates.timer \
+    qemu-guest-agent.service \
+    sshd.service \
+    serial-getty@ttyS0.service \
+    brew-firstboot.service \
+    ssh-sync-firstboot.service

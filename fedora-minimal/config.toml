@@ -1,0 +1,15 @@
+# bootc-image-builder customizations for the qcow2 artifact.
+#
+# The CI workflow replaces the password-hash placeholder with a per-run hash.
+# For a local build, generate one with:
+#
+#   openssl passwd -6
+#
+# and substitute it before passing this file to bootc-image-builder.
+
+[[customizations.user]]
+name = "nithin"
+description = "Sandbox administrator"
+password = "__PASSWORD_HASH__"
+groups = ["wheel"]
+shell = "/usr/bin/fish"
