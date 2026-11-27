@@ -46,11 +46,12 @@ The image is amd64-only because gVisor and Firecracker are selected with
 
 On non-pull-request runs, the `Build Kairos image` GitHub Actions job:
 
-1. Builds and pushes the OCI image with `kairos-<version>`, `kairos-latest`, and
-   branch/PR/commit tags.
+1. Builds and pushes the OCI image with `kairos-<version>`,
+   branch/PR/commit tags, and a keyless cosign signature.
 2. Runs AuroraBoot against that image to create a pre-installed EFI raw disk.
-3. Converts the raw disk to qcow2 and uploads it as
+3. Converts the raw disk to qcow2, boots it, and uploads it as
    `kairos-<version>-amd64-qcow2`.
+4. Promotes `kairos-latest` to the tested image digest.
 
 The artifact ZIP contains:
 
