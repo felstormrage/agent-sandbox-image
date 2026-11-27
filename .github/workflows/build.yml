@@ -71,6 +71,7 @@ jobs:
           PY
 
   build:
+    needs: lint
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     outputs:
@@ -229,6 +230,7 @@ jobs:
 
   build-kairos:
     name: Build Kairos image
+    needs: lint
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:
@@ -418,6 +420,7 @@ jobs:
 
   build-fedora-minimal:
     name: Build Fedora minimal image
+    needs: lint
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:
