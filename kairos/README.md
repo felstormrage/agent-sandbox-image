@@ -130,6 +130,10 @@ sudo kairos-agent upgrade \
   --source oci:ghcr.io/felstormrage/agent-sandbox-image:kairos-latest
 ```
 
+Images from before the updater moved to `/usr/bin` are handled by
+`kairos-legacy-cleanup.service`, which removes the old `/etc/systemd` units and
+the old `/usr/local/bin` script on the first boot after the upgrade.
+
 Disable or reschedule the timer with:
 
 ```sh

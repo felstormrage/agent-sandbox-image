@@ -398,8 +398,59 @@ RUN mkdir -p /usr/share/fish/vendor_conf.d && \
     echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /usr/share/fish/vendor_conf.d/brew.fish && \
     echo 'zoxide init fish | source' > /usr/share/fish/vendor_conf.d/zoxide.fish
 
-# 14. Enable required services.
+# 14. Remove legacy units that older images baked into persistent /etc/systemd.
+# Without this, an upgraded host keeps the old auto-update unit that pointed at
+# the removed /usr/local/bin script. The cleanup is a no-op on fresh installs.
+RUN cat <<'EOF' > /usr/bin/kairos-legacy-cleanup
+#!/bin/bash
+set -euo pipefail
+
+changed=0
+for path in \
+    /etc/systemd/system/brew-firstboot.service \
+    /etc/systemd/system/ssh-sync-firstboot.service \
+    /etc/systemd/system/kairos-auto-update.service \
+    /etc/systemd/system/kairos-auto-update.timer \
+    /etc/systemd/system/multi-user.target.wants/brew-firstboot.service \
+    /etc/systemd/system/multi-user.target.wants/ssh-sync-firstboot.service \
+    /etc/systemd/system/timers.target.wants/kairos-auto-update.timer \
+    /usr/local/bin/kairos-auto-update; do
+    if [[ -e "${path}" || -L "${path}" ]]; then
+        rm -f "${path}"
+        changed=1
+    fi
+done
+
+if [[ "${changed}" -eq 1 ]]; then
+    /usr/bin/systemctl daemon-reload
+    /usr/bin/systemctl enable \
+        brew-firstboot.service \
+        ssh-sync-firstboot.service \
+        kairos-auto-update.timer \
+        kairos-update-healthcheck.timer
+fi
+EOF
+
+RUN chmod 0755 /usr/bin/kairos-legacy-cleanup
+
+RUN cat <<'EOF' > /usr/lib/systemd/system/kairos-legacy-cleanup.service
+[Unit]
+Description=Remove legacy Kairos host units from persistent /etc
+After=local-fs.target
+Before=multi-user.target brew-firstboot.service ssh-sync-firstboot.service kairos-auto-update.timer
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/kairos-legacy-cleanup
+TimeoutStartSec=2min
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 15. Enable required services.
 RUN systemctl enable \
+    kairos-legacy-cleanup.service \
     qemu-guest-agent.service \
     sshd.service \
     serial-getty@ttyS0.service \
@@ -408,7 +459,7 @@ RUN systemctl enable \
     kairos-auto-update.timer \
     kairos-update-healthcheck.timer
 
-# 15. Finalize the Kairos initramfs and OS metadata after all custom files and
+# 16. Finalize the Kairos initramfs and OS metadata after all custom files and
 # runtime assets are in place, then validate the resulting image.
 RUN --mount=type=bind,from=kairos-init,src=/kairos-init,dst=/kairos-init \
     /kairos-init -l info -s init --version "${VERSION}" && \
