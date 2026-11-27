@@ -126,6 +126,13 @@ To inspect a failed run:
 sudo journalctl -u kairos-auto-update.service
 ```
 
+To roll back manually after an upgrade that boots but misbehaves:
+
+```sh
+sudo kairos-agent bootentry --select fallback
+sudo reboot
+```
+
 Because the timer is baked into the image, a node installed from an older qcow2
 needs one manual upgrade before automatic updates begin:
 
