@@ -15,7 +15,8 @@ Included:
   related CLI tools
 - Homebrew installed on first boot into `/home/linuxbrew`
 - SSH key sync installed on first boot
-- Key-only SSH, root SSH login disabled, and firewalld allowing only SSH
+- Key-only SSH, root SSH login disabled, and firewalld with SSH allowed
+  (the default zone also permits the DHCPv6 client)
 - Serial console on `ttyS0`
 - 200 MB journald cap
 - auditd, fail2ban, and zram defaults
