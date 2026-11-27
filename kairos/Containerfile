@@ -99,10 +99,10 @@ RUN set -eux; \
     chmod 0755 /usr/bin/cosign; \
     cosign version
 
-# 7. Harden SSH (disable root login) and cap journald log size at 200M.
-RUN mkdir -p /etc/ssh/sshd_config.d /etc/systemd/journald.conf.d && \
-    echo 'PermitRootLogin no' > /etc/ssh/sshd_config.d/99-hardening.conf && \
-    printf '[Journal]\nSystemMaxUse=200M\n' > /etc/systemd/journald.conf.d/size.conf
+# 7. Cap journald log size at 200M. SSH hardening is applied by Kairos's
+# install.ssh_hardening setting, which also disables password authentication.
+RUN mkdir -p /usr/lib/systemd/journald.conf.d && \
+    printf '[Journal]\nSystemMaxUse=200M\n' > /usr/lib/systemd/journald.conf.d/size.conf
 
 # 8. Prepare the sandbox user's sudo access and KVM group. The user itself is
 # created by cloud-config at install/boot time, so its password and home land on

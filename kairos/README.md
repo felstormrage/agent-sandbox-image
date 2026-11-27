@@ -16,7 +16,9 @@ Included:
 - Homebrew installed on first boot into `/home/linuxbrew`
 - SSH key sync installed on first boot
 - Automatic updates from the published `kairos-latest` image
-- Serial console on `ttyS0` and root SSH login disabled
+- Serial console on `ttyS0`, key-only SSH, and root SSH login disabled
+- SELinux enabled in permissive mode; move to enforcing after validating the
+  sandbox stack
 
 Kairos updates are managed separately from the OpenCode container images. The
 host checks the published `kairos-latest` image automatically (see
@@ -56,10 +58,12 @@ The artifact ZIP contains:
 - `SHA256SUMS`
 - `credentials.txt` with the `nithin` password for this run
 
-Set the repository secret `HOST_PASSWORD` to use a fixed password. If it is not
-set, each run generates a random password and records it in `credentials.txt`.
-To change the user or groups, edit `cloud-config.yaml`; CI replaces
-`__PASSWORD_HASH__` before booting AuroraBoot.
+Set the repository secret `HOST_PASSWORD` to use a fixed console password. If it
+is not set, each run generates a random password and records it in
+`credentials.txt`. SSH is key-only: set the repository secret
+`HOST_SSH_PUBLIC_KEY` to the public key that should be authorized for `nithin`.
+CI replaces `__PASSWORD_HASH__` and `__SSH_PUBLIC_KEY__` before booting
+AuroraBoot. To change the user or groups, edit `cloud-config.yaml`.
 
 ## Automatic updates
 
@@ -129,9 +133,11 @@ sudo systemctl edit kairos-auto-update.timer
 4. Give the VM at least 4 GB of RAM and 20 GB of disk. Firecracker needs
    `/dev/kvm`, so enable nested virtualization on the Proxmox host if the VM
    runs inside another VM.
-5. Log in as `nithin` with the password from `credentials.txt`. The first boot
-   installs Homebrew and the SSH key sync service.
+5. Log in at the serial console as `nithin` with the password from
+   `credentials.txt`, or over SSH with the key configured in
+   `HOST_SSH_PUBLIC_KEY`. The first boot installs Homebrew and the SSH key sync
+   service.
 
-The qcow2 is already installed. The `install:` block in `cloud-config.yaml` is
-commented out; uncomment it only if you want to use the same configuration to
-build an unattended installer ISO instead.
+The qcow2 is already installed. The `install:` block in `cloud-config.yaml`
+drives AuroraBoot's unattended install and enables key-only SSH, SELinux, and
+the serial-console kernel arguments.

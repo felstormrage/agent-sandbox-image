@@ -17,15 +17,18 @@ users:
     groups:
       - wheel
       - kvm
+    ssh_authorized_keys:
+      - "__SSH_PUBLIC_KEY__"
     sudo: ALL=(ALL) NOPASSWD:ALL
 
-ssh_pwauth: true
-
-# The weekly qcow2 artifact is already installed, so this block stays disabled.
-# Uncomment it when using this cloud config to build an unattended installer
-# ISO instead:
-#
-# install:
-#   auto: true
-#   reboot: true
-#   device: "auto"
+# SSH is key-only. The password above is for the serial console only.
+install:
+  auto: true
+  reboot: true
+  device: "auto"
+  ssh_hardening: true
+  selinux:
+    enabled: true
+    mode: permissive
+  grub_options:
+    extra_cmdline: "console=tty0 console=ttyS0,115200n8"
