@@ -20,7 +20,7 @@ LABEL org.opencontainers.image.title="fedora-minimal-sandbox" \
 # hadolint ignore=DL3041
 RUN set -eux; \
     dnf -y install \
-        qemu-guest-agent firewalld \
+        qemu-guest-agent firewalld audit fail2ban zram-generator-defaults \
         curl wget fish tmux sudo openssh-server \
         bat ripgrep fd-find du-dust eza zoxide btop neovim \
         git gcc make patch unzip bzip2 which zlib-devel procps-ng file; \
@@ -41,6 +41,7 @@ OnBootSec=
 OnUnitInactiveSec=
 OnCalendar=*-*-* 04:00:00
 RandomizedDelaySec=15m
+Persistent=true
 EOF
 
 # 4. Cap journald log size at 200M. SSH policy is applied by the
@@ -48,14 +49,19 @@ EOF
 RUN mkdir -p /usr/lib/systemd/journald.conf.d && \
     printf '[Journal]\nSystemMaxUse=200M\n' > /usr/lib/systemd/journald.conf.d/size.conf
 
-# 5. Permit passwordless sudo for the user created by config.toml. The user is
+# 5. Enable the fail2ban sshd jail. SSH itself is key-only; this still keeps
+# noisy failed connection attempts out of the logs and firewall.
+RUN mkdir -p /etc/fail2ban/jail.d && \
+    printf '[sshd]\nenabled = true\n' > /etc/fail2ban/jail.d/sshd.local
+
+# 6. Permit passwordless sudo for the user created by config.toml. The user is
 # created at disk-build time by bootc-image-builder, not in the container layer,
 # so /home stays out of the immutable image.
 RUN mkdir -p /etc/sudoers.d && \
     echo 'nithin ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/nithin && \
     chmod 0440 /etc/sudoers.d/nithin
 
-# 6. Auto-install Homebrew on first boot into /home/linuxbrew. The directory is
+# 7. Auto-install Homebrew on first boot into /home/linuxbrew. The directory is
 # created by the unit so it lives on the machine-local /var/home mount.
 RUN cat <<'EOF' > /etc/systemd/system/brew-firstboot.service
 [Unit]
@@ -75,7 +81,7 @@ ExecStart=/bin/bash -c 'set -o pipefail; curl -fsSL https://raw.githubuserconten
 WantedBy=multi-user.target
 EOF
 
-# 7. Run the SSH key sync installer once on first boot.
+# 8. Run the SSH key sync installer once on first boot.
 RUN cat <<'EOF' > /etc/systemd/system/ssh-sync-firstboot.service
 [Unit]
 Description=Install SSH key sync on first boot
@@ -100,16 +106,22 @@ ExecStart=/bin/bash -ec '\
 WantedBy=multi-user.target
 EOF
 
-# 8. Wire Homebrew and zoxide into fish automatically.
+# 9. Wire Homebrew and zoxide into fish automatically.
 RUN mkdir -p /etc/fish/conf.d && \
     echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /etc/fish/conf.d/brew.fish && \
     echo 'zoxide init fish | source' > /etc/fish/conf.d/zoxide.fish
 
-# 9. Enable required services and timers.
+# 10. Enable required services and timers, and disable kdump on small VMs.
 RUN systemctl enable \
     bootc-fetch-apply-updates.timer \
     qemu-guest-agent.service \
     sshd.service \
     serial-getty@ttyS0.service \
     brew-firstboot.service \
-    ssh-sync-firstboot.service
+    ssh-sync-firstboot.service \
+    auditd.service \
+    fail2ban.service && \
+    systemctl disable kdump.service
+
+# 11. Validate the bootc image layout and configuration.
+RUN bootc container lint

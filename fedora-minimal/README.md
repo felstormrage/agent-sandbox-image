@@ -14,12 +14,23 @@ Included:
 - Key-only SSH, root SSH login disabled, and firewalld allowing only SSH
 - Serial console on `ttyS0`
 - 200 MB journald cap
+- auditd, fail2ban, and zram defaults
+- kdump disabled for small VMs
 
-Updates are applied by bootc:
+Updates are applied by bootc. The timer checks daily at 04:00 with a randomized
+delay and catches up after downtime; bootc reboots after applying an update.
 
 ```sh
+sudo bootc status
 sudo bootc update
 systemctl list-timers bootc-fetch-apply-updates.timer
+```
+
+To return to the previous deployment:
+
+```sh
+sudo bootc rollback
+sudo reboot
 ```
 
 ## Build
