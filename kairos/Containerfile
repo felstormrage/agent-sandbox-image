@@ -61,8 +61,8 @@ RUN set -eux; \
     runsc --version
 
 # 4. Register gVisor (runsc) as an OCI runtime in Podman.
-RUN mkdir -p /etc/containers/containers.conf.d && \
-    cat <<'EOF' > /etc/containers/containers.conf.d/gvisor.conf
+RUN mkdir -p /usr/share/containers/containers.conf.d && \
+    cat <<'EOF' > /usr/share/containers/containers.conf.d/gvisor.conf
 [engine.runtimes]
 runsc = ["/usr/local/bin/runsc"]
 EOF
@@ -85,8 +85,8 @@ RUN set -eux; \
     jailer --version
 
 # 6. Enable IPv4 forwarding for Firecracker TAP/NAT networking.
-RUN mkdir -p /etc/sysctl.d && \
-    echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-firecracker.conf
+RUN mkdir -p /usr/lib/sysctl.d && \
+    echo 'net.ipv4.ip_forward = 1' > /usr/lib/sysctl.d/99-firecracker.conf
 
 # Install cosign so the automatic updater can verify image signatures before
 # staging an upgrade.
@@ -145,7 +145,7 @@ EOF
 
 RUN chmod 0755 /usr/bin/install-homebrew /usr/bin/install-ssh-sync
 
-RUN cat <<'EOF' > /etc/systemd/system/brew-firstboot.service
+RUN cat <<'EOF' > /usr/lib/systemd/system/brew-firstboot.service
 [Unit]
 Description=Install Homebrew on first boot
 After=network-online.target
@@ -170,7 +170,7 @@ WantedBy=multi-user.target
 EOF
 
 # 10. Run the SSH key sync installer once on first boot.
-RUN cat <<'EOF' > /etc/systemd/system/ssh-sync-firstboot.service
+RUN cat <<'EOF' > /usr/lib/systemd/system/ssh-sync-firstboot.service
 [Unit]
 Description=Install SSH key sync on first boot
 After=network-online.target systemd-user-sessions.service
@@ -390,10 +390,11 @@ Unit=kairos-update-healthcheck.service
 WantedBy=timers.target
 EOF
 
-# 13. Wire Homebrew and zoxide into fish automatically.
-RUN mkdir -p /etc/fish/conf.d && \
-    echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /etc/fish/conf.d/brew.fish && \
-    echo 'zoxide init fish | source' > /etc/fish/conf.d/zoxide.fish
+# 13. Wire Homebrew and zoxide into fish automatically. Vendor snippets live
+# under /usr so they travel with image upgrades.
+RUN mkdir -p /usr/share/fish/vendor_conf.d && \
+    echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /usr/share/fish/vendor_conf.d/brew.fish && \
+    echo 'zoxide init fish | source' > /usr/share/fish/vendor_conf.d/zoxide.fish
 
 # 14. Enable required services.
 RUN systemctl enable \

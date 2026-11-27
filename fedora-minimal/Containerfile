@@ -36,8 +36,8 @@ match-architectures = ["x86_64"]
 EOF
 
 # 3. Tame bootc auto-updates to a 04:00 daily maintenance window.
-RUN mkdir -p /etc/systemd/system/bootc-fetch-apply-updates.timer.d && \
-    cat <<'EOF' > /etc/systemd/system/bootc-fetch-apply-updates.timer.d/override.conf
+RUN mkdir -p /usr/lib/systemd/system/bootc-fetch-apply-updates.timer.d && \
+    cat <<'EOF' > /usr/lib/systemd/system/bootc-fetch-apply-updates.timer.d/override.conf
 [Timer]
 OnBootSec=
 OnUnitInactiveSec=
@@ -94,7 +94,7 @@ EOF
 
 RUN chmod 0755 /usr/bin/install-homebrew /usr/bin/install-ssh-sync
 
-RUN cat <<'EOF' > /etc/systemd/system/brew-firstboot.service
+RUN cat <<'EOF' > /usr/lib/systemd/system/brew-firstboot.service
 [Unit]
 Description=Install Homebrew on first boot
 After=network-online.target
@@ -119,7 +119,7 @@ WantedBy=multi-user.target
 EOF
 
 # 8. Run the SSH key sync installer once on first boot.
-RUN cat <<'EOF' > /etc/systemd/system/ssh-sync-firstboot.service
+RUN cat <<'EOF' > /usr/lib/systemd/system/ssh-sync-firstboot.service
 [Unit]
 Description=Install SSH key sync on first boot
 After=network-online.target systemd-user-sessions.service
@@ -148,10 +148,11 @@ RestartSec=2min
 WantedBy=multi-user.target
 EOF
 
-# 9. Wire Homebrew and zoxide into fish automatically.
-RUN mkdir -p /etc/fish/conf.d && \
-    echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /etc/fish/conf.d/brew.fish && \
-    echo 'zoxide init fish | source' > /etc/fish/conf.d/zoxide.fish
+# 9. Wire Homebrew and zoxide into fish automatically. Vendor snippets live
+# under /usr so they travel with image upgrades.
+RUN mkdir -p /usr/share/fish/vendor_conf.d && \
+    echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /usr/share/fish/vendor_conf.d/brew.fish && \
+    echo 'zoxide init fish | source' > /usr/share/fish/vendor_conf.d/zoxide.fish
 
 # 10. Enable required services and timers, and disable kdump on small VMs.
 RUN systemctl enable \
