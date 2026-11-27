@@ -23,6 +23,7 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 env:
   REGISTRY: ghcr.io
@@ -226,6 +227,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: v3.1.6
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
@@ -233,7 +240,6 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
           tags: |
             type=raw,value=kairos-${{ steps.image.outputs.version }}
-            type=raw,value=kairos-latest,enable={{is_default_branch}}
             type=ref,event=branch,prefix=kairos-branch-
             type=ref,event=pr,prefix=kairos-pr-
             type=sha,prefix=kairos-sha-
@@ -243,6 +249,7 @@ jobs:
             org.opencontainers.image.version=${{ steps.image.outputs.version }}
 
       - name: Build and push
+        id: push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
@@ -259,6 +266,19 @@ jobs:
           cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max,scope=kairos-host' || '' }}
           provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
           sbom: ${{ github.event_name != 'pull_request' }}
+
+      - name: Sign Kairos image
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/build.yml@refs/heads/${GITHUB_REF_NAME}$" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}@${DIGEST}"
 
       - name: Install qemu-img
         if: github.event_name != 'pull_request'
@@ -314,8 +334,10 @@ jobs:
             find build/kairos -maxdepth 2 -type f >&2
             exit 1
           fi
-          qemu-img convert -c -f raw -O qcow2 "${raw}" \
-            "build/artifacts/kairos-${{ steps.image.outputs.version }}-amd64.qcow2"
+          qcow="build/artifacts/kairos-${{ steps.image.outputs.version }}-amd64.qcow2"
+          qemu-img convert -c -f raw -O qcow2 "${raw}" "${qcow}"
+          qemu-img info "${qcow}"
+          qemu-img check "${qcow}"
           rm -rf build/kairos build/kairos-cloud-config.yaml
 
           printf 'user: nithin\npassword: %s\n' "${password}" > build/artifacts/credentials.txt
@@ -329,6 +351,18 @@ jobs:
           path: build/artifacts
           if-no-files-found: error
           retention-days: 30
+
+      # Keep the moving channel behind the artifact build. Auto-updating hosts
+      # follow kairos-latest, so it is promoted only after the qcow2 was built
+      # and uploaded successfully.
+      - name: Promote kairos-latest
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create -t "${IMAGE}:kairos-latest" "${IMAGE}@${DIGEST}"
 
   build-fedora-minimal:
     name: Build Fedora minimal image
@@ -369,6 +403,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install cosign
+        if: github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+        with:
+          cosign-release: v3.1.6
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
@@ -386,6 +426,7 @@ jobs:
             org.opencontainers.image.version=${{ steps.image.outputs.version }}
 
       - name: Build and push
+        id: push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
@@ -400,6 +441,19 @@ jobs:
           cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max,scope=fedora-minimal' || '' }}
           provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
           sbom: ${{ github.event_name != 'pull_request' }}
+
+      - name: Sign Fedora minimal image
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/build.yml@refs/heads/${GITHUB_REF_NAME}$" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}@${DIGEST}"
 
       - name: Resolve qcow2 source
         if: github.event_name != 'pull_request'
@@ -467,8 +521,10 @@ jobs:
             find build/fedora-minimal -maxdepth 3 -type f >&2
             exit 1
           fi
-          install -m 0644 "${qcow}" \
-            "build/artifacts/fedora-minimal-${{ steps.image.outputs.version }}-amd64.qcow2"
+          output="build/artifacts/fedora-minimal-${{ steps.image.outputs.version }}-amd64.qcow2"
+          install -m 0644 "${qcow}" "${output}"
+          qemu-img info "${output}"
+          qemu-img check "${output}"
           rm -rf build/fedora-minimal build/fedora-minimal-config.toml
 
           printf 'user: nithin\npassword: %s\n' "${password}" > build/artifacts/credentials.txt
