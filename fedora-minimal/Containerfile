@@ -161,6 +161,7 @@ RUN systemctl enable \
     serial-getty@ttyS0.service \
     brew-firstboot.service \
     ssh-sync-firstboot.service \
+    firewalld.service \
     auditd.service \
     fail2ban.service && \
     systemctl disable kdump.service
