@@ -164,7 +164,7 @@ RUN systemctl enable \
     firewalld.service \
     auditd.service \
     fail2ban.service && \
-    systemctl disable kdump.service
+    (systemctl disable kdump.service 2>/dev/null || true)
 
 # 11. Validate the bootc image layout and configuration.
 RUN bootc container lint
