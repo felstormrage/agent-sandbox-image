@@ -7,8 +7,7 @@
 # Podman, Skopeo, rpm-ostree, toolbox, and common server tooling; this image
 # deliberately does not add the gVisor, Firecracker, or Kairos
 # container-networking stack.
-# hadolint ignore=DL3007
-FROM quay.io/fedora/fedora-bootc:latest
+FROM quay.io/fedora/fedora-bootc:45@sha256:28d699682aa6f6b48c96864032717c596020d5d9890f83f488454e0d72f955b7
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 

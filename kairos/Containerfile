@@ -7,10 +7,9 @@
 # starts from plain Fedora and lets kairos-init turn it into a Kairos system.
 # It does not layer Kairos on top of fedora-bootc.
 ARG KAIROS_INIT_VERSION=v4.7.0
-FROM quay.io/kairos/kairos-init:${KAIROS_INIT_VERSION} AS kairos-init
+FROM quay.io/kairos/kairos-init:${KAIROS_INIT_VERSION}@sha256:ddce7e8b176be66d40c21ab58200c62c84d42907cec2f5bbf53a774ddd702421 AS kairos-init
 
-# hadolint ignore=DL3007
-FROM fedora:latest
+FROM fedora:45@sha256:a7d72ba2745b100a3351087472e5ee7b2450af7cf331e7673007e3817612839c
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
