@@ -10,6 +10,6 @@
 [[customizations.user]]
 name = "nithin"
 description = "Sandbox administrator"
-password = "__PASSWORD_HASH__"
+password = "$6$zXuU5A/92hZpC8.Z$k9cEsXbhEgEELTQcU06Q2bJiy285rS4XnUqoCbIJZnPXut0cXQo4jGXf6ScLg5lfvtp3iD0O2y5g.BNkAFoRj0"
 groups = ["wheel"]
 shell = "/usr/bin/fish"
