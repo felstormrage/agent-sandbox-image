@@ -23,6 +23,9 @@ credential details.
 - `kairos/` contains the full Kairos host image and its cloud config.
 - `fedora-minimal/` contains the Fedora bootc host image and its
   `bootc-image-builder` config.
+- `scripts/smoke-test-qcow2.sh` boots a host qcow2 under QEMU and checks the
+  basic host contract in CI.
+- `renovate.json` tracks the pinned base images and GitHub Actions.
 
 ## OpenCode sandbox image
 
@@ -153,6 +156,11 @@ includes gVisor and Firecracker plus the container-networking stack. The Fedora
 image keeps the standard bootc base, including Podman and Skopeo, and adds the
 CLI tooling without the gVisor/Firecracker stack.
 
+SSH is key-only on both hosts; the password in `credentials.txt` is for the
+serial console only. The `nithin` user has passwordless sudo, so treat SSH
+access as root access and keep these hosts on a trusted network or behind a
+VPN/firewall.
+
 Each host folder documents its qcow2 artifact, boot settings, and update path:
 
 - [`kairos/README.md`](kairos/README.md)
@@ -218,13 +226,17 @@ are tagged with `latest` (on the default branch), the branch name, semver tags,
 The independent host jobs build amd64 OCI images and, on non-PR runs, upload a
 pre-installed qcow2 disk for Proxmox or another hypervisor:
 
-- `build-kairos` publishes `kairos-latest`, `kairos-<version>`, branch/PR, and
-  commit tags, then uses AuroraBoot and `qemu-img` to create
-  `kairos-<version>-amd64.qcow2`.
+- `build-kairos` publishes `kairos-<version>`, branch/PR, and commit tags, uses
+  AuroraBoot and `qemu-img` to create `kairos-<version>-amd64.qcow2`, boot-tests
+  the disk, and only then promotes `kairos-latest`.
 - `build-fedora-minimal` publishes `fedora-minimal-latest`,
   `fedora-minimal-<version>`, branch/PR, and commit tags, then uses
   `bootc-image-builder` to create
-  `fedora-minimal-<version>-amd64.qcow2`.
+  `fedora-minimal-<version>-amd64.qcow2` and boot-tests the disk.
+
+Both host images are signed with keyless cosign from the build workflow. The
+Kairos updater verifies that signature and the exact image digest before
+upgrading.
 
 Each artifact ZIP contains the qcow2, `SHA256SUMS`, and a `credentials.txt` for
 the `nithin` console login. Set the repository secret `HOST_SSH_PUBLIC_KEY` to

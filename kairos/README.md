@@ -81,6 +81,13 @@ compares it with `KAIROS_VERSION` in `/etc/kairos-release`.
   `kairos-agent upgrade --source oci:...@sha256:...` and reboots into that exact
   image. The digest pin also closes the race where `kairos-latest` moves between
   the version check and the upgrade.
+- The signature must be issued by this repository's
+  `.github/workflows/build.yml` on `main` and by GitHub Actions OIDC. Forks must
+  override `KAIROS_UPDATE_COSIGN_IDENTITY` and
+  `KAIROS_UPDATE_COSIGN_ISSUER` in the service environment.
+- CI promotes `kairos-latest` only after the qcow2 artifact builds, boots, and
+  uploads, so an image whose disk build failed does not become the update
+  channel.
 - If the installed version is newer, the check leaves it alone. This prevents a
   tagged release from being downgraded to a `main` build.
 - The timer is skipped when the system is booted into recovery mode.
@@ -97,6 +104,10 @@ compares it with `KAIROS_VERSION` in `/etc/kairos-release`.
 The check assumes the GHCR package is publicly readable. For a private package,
 configure registry credentials for both `skopeo` and `kairos-agent`, or the
 check and upgrade will fail.
+
+`kairos-latest` is the main-branch prerelease channel. A host installed from a
+tagged release will move to a newer main build. Pin or disable the timer if you
+want a host to stay on a tagged release.
 
 To run the version, digest, and signature checks without upgrading:
 
