@@ -22,7 +22,7 @@ RUN set -eux; \
     dnf -y install \
         qemu-guest-agent \
         curl wget fish tmux sudo openssh-server \
-        bat ripgrep fd-find du-dust procs eza zoxide btop neovim \
+        bat ripgrep fd-find du-dust eza zoxide btop neovim \
         git gcc make patch unzip bzip2 which zlib-devel procps-ng file; \
     dnf clean all
 

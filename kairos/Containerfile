@@ -23,7 +23,7 @@ LABEL org.opencontainers.image.title="kairos-sandbox" \
 # 1. Install the Kairos OS, boot support, and immutable-system services.
 # Add --provider k3s if you want Kairos to bundle Kubernetes.
 COPY --from=kairos-init /kairos-init /kairos-init
-RUN /kairos-init -l info -s install
+RUN /kairos-init -l info -s install --version "${VERSION}"
 
 # 2. Core system, virtualization/container runtime, networking, and CLI tools.
 # hadolint ignore=DL3041
@@ -32,7 +32,7 @@ RUN set -eux; \
         qemu-guest-agent \
         podman containernetworking-plugins nftables iproute jq \
         curl wget fish tmux sudo openssh-server tar \
-        bat ripgrep fd-find du-dust procs eza zoxide btop neovim \
+        bat ripgrep fd-find du-dust eza zoxide btop neovim \
         git gcc make patch unzip bzip2 which zlib-devel procps-ng file; \
     dnf clean all
 
@@ -139,4 +139,4 @@ RUN systemctl enable \
 
 # 13. Finalize the Kairos initramfs and OS metadata after all custom files and
 # runtime assets are in place.
-RUN /kairos-init -l info -s init && rm /kairos-init
+RUN /kairos-init -l info -s init --version "${VERSION}" && rm /kairos-init
