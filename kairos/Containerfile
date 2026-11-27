@@ -26,9 +26,10 @@ LABEL org.opencontainers.image.title="kairos-sandbox" \
       org.opencontainers.image.version="${VERSION}"
 
 # 1. Install the Kairos OS, boot support, and immutable-system services.
-# Add --provider k3s if you want Kairos to bundle Kubernetes.
-COPY --from=kairos-init /kairos-init /kairos-init
-RUN /kairos-init -l info -s install --version "${VERSION}"
+# Add --provider k3s if you want Kairos to bundle Kubernetes. Bind-mount the
+# binary instead of copying it so the final image does not carry the tool.
+RUN --mount=type=bind,from=kairos-init,src=/kairos-init,dst=/kairos-init \
+    /kairos-init -l info -s install --version "${VERSION}"
 
 # 2. Core system, virtualization/container runtime, networking, and CLI tools.
 # hadolint ignore=DL3041
@@ -336,7 +337,7 @@ RUN mkdir -p /etc/fish/conf.d && \
     echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /etc/fish/conf.d/brew.fish && \
     echo 'zoxide init fish | source' > /etc/fish/conf.d/zoxide.fish
 
-# 13. Enable required services.
+# 14. Enable required services.
 RUN systemctl enable \
     qemu-guest-agent.service \
     sshd.service \
@@ -346,6 +347,9 @@ RUN systemctl enable \
     kairos-auto-update.timer \
     kairos-update-healthcheck.timer
 
-# 14. Finalize the Kairos initramfs and OS metadata after all custom files and
-# runtime assets are in place.
-RUN /kairos-init -l info -s init --version "${VERSION}" && rm /kairos-init
+# 15. Finalize the Kairos initramfs and OS metadata after all custom files and
+# runtime assets are in place, then validate the resulting image.
+RUN --mount=type=bind,from=kairos-init,src=/kairos-init,dst=/kairos-init \
+    /kairos-init -l info -s init --version "${VERSION}" && \
+    /kairos-init validate && \
+    visudo -cf /etc/sudoers
