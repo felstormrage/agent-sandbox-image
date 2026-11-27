@@ -110,6 +110,7 @@ if {$env(SMOKE_FLAVOR) eq "kairos"} {
     run_check "sudo podman info >/dev/null" PODMAN
     run_check "test -x /usr/bin/kairos-auto-update" AUTO_UPDATE_BINARY
     run_check "systemctl is-enabled --quiet kairos-auto-update.timer" AUTO_UPDATE_TIMER
+    run_check "systemctl is-enabled --quiet kairos-update-healthcheck.timer" HEALTHCHECK_TIMER
 } else {
     run_check "sudo bootc status >/dev/null" BOOTC_STATUS
     run_check "systemctl is-active --quiet firewalld" FIREWALLD
