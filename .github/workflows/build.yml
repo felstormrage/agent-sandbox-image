@@ -29,6 +29,47 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  lint:
+    name: Validate shell and config
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-yaml shellcheck
+
+      - name: Validate shell scripts
+        run: |
+          set -euo pipefail
+          for script in scripts/*.sh; do
+            bash -n "${script}"
+          done
+          shellcheck -S error scripts/*.sh
+
+      - name: Validate YAML, TOML, and JSON
+        run: |
+          python3 - <<'PY'
+          import json
+          import tomllib
+          from pathlib import Path
+
+          import yaml
+
+          for path in (".github/workflows/build.yml", "kairos/cloud-config.yaml"):
+              yaml.safe_load(Path(path).read_text())
+              print(f"{path}: OK")
+
+          tomllib.loads(Path("fedora-minimal/config.toml").read_text())
+          print("fedora-minimal/config.toml: OK")
+
+          json.loads(Path("renovate.json").read_text())
+          print("renovate.json: OK")
+          PY
+
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
