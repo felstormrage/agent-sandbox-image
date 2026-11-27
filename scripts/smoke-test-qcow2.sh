@@ -101,17 +101,17 @@ proc run_check {command label} {
     }
 }
 
-run_check "sshd -T | grep -qx \"passwordauthentication no\"" SSH_POLICY
+run_check "sudo /usr/sbin/sshd -T | grep -qx \"passwordauthentication no\"" SSH_POLICY
 run_check "systemctl is-active --quiet sshd" SSHD_ACTIVE
 
 if {$env(SMOKE_FLAVOR) eq "kairos"} {
     run_check "runsc --version" RUNSC
     run_check "firecracker --version" FIRECRACKER
-    run_check "podman info >/dev/null" PODMAN
+    run_check "sudo podman info >/dev/null" PODMAN
     run_check "test -x /usr/bin/kairos-auto-update" AUTO_UPDATE_BINARY
     run_check "systemctl is-enabled --quiet kairos-auto-update.timer" AUTO_UPDATE_TIMER
 } else {
-    run_check "bootc status >/dev/null" BOOTC_STATUS
+    run_check "sudo bootc status >/dev/null" BOOTC_STATUS
     run_check "systemctl is-active --quiet firewalld" FIREWALLD
     run_check "systemctl is-active --quiet auditd" AUDITD
     run_check "systemctl is-active --quiet fail2ban" FAIL2BAN
