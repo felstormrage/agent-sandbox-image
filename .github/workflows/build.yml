@@ -368,7 +368,7 @@ jobs:
   build-fedora-minimal:
     name: Build Fedora minimal image
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -417,7 +417,6 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
           tags: |
             type=raw,value=fedora-minimal-${{ steps.image.outputs.version }}
-            type=raw,value=fedora-minimal-latest,enable={{is_default_branch}}
             type=ref,event=branch,prefix=fedora-minimal-branch-
             type=ref,event=pr,prefix=fedora-minimal-pr-
             type=sha,prefix=fedora-minimal-sha-
@@ -456,35 +455,26 @@ jobs:
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${IMAGE}@${DIGEST}"
 
-      - name: Resolve qcow2 source
-        if: github.event_name != 'pull_request'
-        id: source
-        run: |
-          set -euo pipefail
-          ref="${REGISTRY}/${{ steps.image.outputs.name }}:fedora-minimal-${{ steps.image.outputs.version }}"
-          # On the default branch, bake the latest tag into the disk so bootc
-          # fetches future weekly builds from the same moving reference.
-          if [ "${GITHUB_REF}" = "refs/heads/${{ github.event.repository.default_branch }}" ]; then
-            ref="${REGISTRY}/${{ steps.image.outputs.name }}:fedora-minimal-latest"
-          fi
-          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
-
       - name: Install podman, qemu, and OVMF
         if: github.event_name != 'pull_request'
         run: |
           sudo apt-get update
           sudo apt-get install -y podman qemu-utils qemu-system-x86 ovmf expect
 
-      - name: Build Fedora minimal qcow2
+      - name: Build and test Fedora minimal qcow2
         if: github.event_name != 'pull_request'
         env:
-          IMAGE_REF: ${{ steps.source.outputs.ref }}
+          TEST_REF: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:fedora-minimal-${{ steps.image.outputs.version }}
+          LATEST_REF: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:fedora-minimal-latest
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IS_DEFAULT_BRANCH: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
           HOST_PASSWORD: ${{ secrets.HOST_PASSWORD }}
           HOST_SSH_PUBLIC_KEY: ${{ secrets.HOST_SSH_PUBLIC_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BIB: quay.io/centos-bootc/bootc-image-builder:latest@sha256:a829b782ecee4764edcac472d5672a76f20002143618fcfbd17dc1cc7319e642
         run: |
           set -euo pipefail
-          mkdir -p build/fedora-minimal build/artifacts
+          mkdir -p build/artifacts build/fedora-minimal-test build/fedora-minimal
 
           public_key="${HOST_SSH_PUBLIC_KEY:-}"
           if [ -z "${public_key}" ]; then
@@ -502,28 +492,54 @@ jobs:
 
           printf '%s' "${GH_TOKEN}" | sudo podman login ghcr.io \
             -u "${{ github.actor }}" --password-stdin
-          sudo podman pull "${IMAGE_REF}"
 
-          sudo podman run --rm --privileged --pull=newer \
-            --security-opt label=disable \
-            -v "${PWD}/build/fedora-minimal-config.toml:/config.toml:ro" \
-            -v "${PWD}/build/fedora-minimal:/output" \
-            -v /var/lib/containers/storage:/var/lib/containers/storage \
-            quay.io/centos-bootc/bootc-image-builder:latest@sha256:a829b782ecee4764edcac472d5672a76f20002143618fcfbd17dc1cc7319e642 \
-            --type qcow2 \
-            --local \
-            --config /config.toml \
-            "${IMAGE_REF}"
-          sudo chown -R "$(id -u):$(id -g)" build
+          build_disk() {
+            local ref="$1"
+            local out="$2"
+            rm -rf "${out}"
+            mkdir -p "${out}"
+            sudo podman pull "${ref}" >&2
+            sudo podman run --rm --privileged --pull=newer \
+              --security-opt label=disable \
+              -v "${PWD}/build/fedora-minimal-config.toml:/config.toml:ro" \
+              -v "${PWD}/${out}:/output" \
+              -v /var/lib/containers/storage:/var/lib/containers/storage \
+              "${BIB}" \
+              --type qcow2 \
+              --local \
+              --config /config.toml \
+              "${ref}" >&2
+            sudo chown -R "$(id -u):$(id -g)" build
+            find "${out}" -type f -name '*.qcow2' -print -quit
+          }
 
-          qcow="$(find build/fedora-minimal -type f -name '*.qcow2' -print -quit)"
-          if [ -z "${qcow}" ]; then
-            echo "bootc-image-builder did not produce a qcow2 image" >&2
+          test_qcow="$(build_disk "${TEST_REF}" build/fedora-minimal-test)"
+          if [ -z "${test_qcow}" ]; then
+            echo "bootc-image-builder did not produce a test qcow2 image" >&2
+            find build/fedora-minimal-test -maxdepth 3 -type f >&2
+            exit 1
+          fi
+          qemu-img info "${test_qcow}"
+          qemu-img check "${test_qcow}"
+          ./scripts/smoke-test-qcow2.sh "${test_qcow}" "${password}" fedora
+          rm -rf build/fedora-minimal-test
+
+          # Promote the moving channel only after the disk boots and passes.
+          if [ "${IS_DEFAULT_BRANCH}" = "true" ]; then
+            docker buildx imagetools create -t "${LATEST_REF}" "${TEST_REF}@${DIGEST}"
+            final_ref="${LATEST_REF}"
+          else
+            final_ref="${TEST_REF}"
+          fi
+
+          final_qcow="$(build_disk "${final_ref}" build/fedora-minimal)"
+          if [ -z "${final_qcow}" ]; then
+            echo "bootc-image-builder did not produce the final qcow2 image" >&2
             find build/fedora-minimal -maxdepth 3 -type f >&2
             exit 1
           fi
           output="build/artifacts/fedora-minimal-${{ steps.image.outputs.version }}-amd64.qcow2"
-          install -m 0644 "${qcow}" "${output}"
+          install -m 0644 "${final_qcow}" "${output}"
           qemu-img info "${output}"
           qemu-img check "${output}"
           ./scripts/smoke-test-qcow2.sh "${output}" "${password}" fedora

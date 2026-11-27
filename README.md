@@ -229,10 +229,10 @@ pre-installed qcow2 disk for Proxmox or another hypervisor:
 - `build-kairos` publishes `kairos-<version>`, branch/PR, and commit tags, uses
   AuroraBoot and `qemu-img` to create `kairos-<version>-amd64.qcow2`, boot-tests
   the disk, and only then promotes `kairos-latest`.
-- `build-fedora-minimal` publishes `fedora-minimal-latest`,
-  `fedora-minimal-<version>`, branch/PR, and commit tags, then uses
-  `bootc-image-builder` to create
-  `fedora-minimal-<version>-amd64.qcow2` and boot-tests the disk.
+- `build-fedora-minimal` publishes `fedora-minimal-<version>`, branch/PR, and
+  commit tags, builds and boot-tests a qcow2, promotes `fedora-minimal-latest`
+  on the default branch, then builds and boot-tests the published
+  `fedora-minimal-<version>-amd64.qcow2` from that channel.
 
 Both host images are signed with keyless cosign from the build workflow. The
 Kairos updater verifies that signature and the exact image digest before

@@ -55,12 +55,13 @@ but the serial-console kernel arguments are currently scoped to x86_64.
 On non-pull-request runs, the `Build Fedora minimal image` GitHub Actions job:
 
 1. Builds and pushes the OCI image with `fedora-minimal-<version>`,
-   `fedora-minimal-latest`, and branch/PR/commit tags.
-2. Uses `bootc-image-builder` to create a qcow2 disk from the image. On `main`
-   it builds from `fedora-minimal-latest` so the installed system tracks future
-   weekly upgrades.
-3. Uploads the artifact as
-   `fedora-minimal-<version>-amd64-qcow2`.
+   branch/PR/commit tags, and a keyless cosign signature.
+2. Uses `bootc-image-builder` to create a test qcow2 from the version tag and
+   boots it under QEMU.
+3. On `main`, promotes `fedora-minimal-latest` only after that boot test passes.
+4. Builds the published qcow2 from `fedora-minimal-latest` on `main` (or the
+   version tag elsewhere) so the installed system tracks future weekly upgrades,
+   boots it, and uploads it as `fedora-minimal-<version>-amd64-qcow2`.
 
 The artifact ZIP contains:
 
