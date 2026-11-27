@@ -113,20 +113,57 @@ RUN set -eux; \
     echo 'nithin ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/nithin; \
     chmod 0440 /etc/sudoers.d/nithin
 
-# 9. Auto-install Homebrew on first boot into /home/linuxbrew.
+# 9. Pin and verify the first-boot installers. Both run through /var/tmp
+# because Kairos mounts /tmp noexec.
+RUN cat <<'EOF' > /usr/bin/install-homebrew
+#!/bin/bash
+set -euo pipefail
+
+url="https://raw.githubusercontent.com/Homebrew/install/e09ddecb4d4f4a3e776c00c62e010276133d1eed/install.sh"
+sha256="34090c61925f5d5c4caca7f1f7089efac33056b1603b4d62b4671d8d22f28fb3"
+tmp="$(mktemp -p /var/tmp homebrew-install.XXXXXX)"
+trap 'rm -f "${tmp}"' EXIT
+
+curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL "${url}" -o "${tmp}"
+echo "${sha256}  ${tmp}" | sha256sum -c -
+NONINTERACTIVE=1 bash "${tmp}"
+EOF
+
+RUN cat <<'EOF' > /usr/bin/install-ssh-sync
+#!/bin/bash
+set -euo pipefail
+
+url="https://raw.githubusercontent.com/felstormrage/scripts/2ca3e75505e5a8625c8fb7f475f91b99801c8d38/install-ssh-sync.sh"
+sha256="ff802f3256eab6ae0ca0dae2daab53168f236b00f05c56387750f06a11a6edc1"
+tmp="$(mktemp -p /var/tmp ssh-sync-install.XXXXXX)"
+trap 'rm -f "${tmp}"' EXIT
+
+curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL "${url}" -o "${tmp}"
+echo "${sha256}  ${tmp}" | sha256sum -c -
+bash "${tmp}"
+EOF
+
+RUN chmod 0755 /usr/bin/install-homebrew /usr/bin/install-ssh-sync
+
 RUN cat <<'EOF' > /etc/systemd/system/brew-firstboot.service
 [Unit]
 Description=Install Homebrew on first boot
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=!/home/linuxbrew/.linuxbrew/bin/brew
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 User=nithin
 Environment=NONINTERACTIVE=1
+Environment=HOME=/home/nithin
+Environment=TMPDIR=/var/tmp
 ExecStartPre=/usr/bin/sudo /usr/bin/install -d -o nithin -g nithin /home/linuxbrew
-ExecStart=/bin/bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash'
+ExecStart=/usr/bin/install-homebrew
+TimeoutStartSec=30min
+Restart=on-failure
+RestartSec=2min
 
 [Install]
 WantedBy=multi-user.target
@@ -139,19 +176,24 @@ Description=Install SSH key sync on first boot
 After=network-online.target systemd-user-sessions.service
 Wants=network-online.target
 ConditionPathExists=!/var/lib/ssh-sync-firstboot.done
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
+Environment=TMPDIR=/var/tmp
 ExecStart=/bin/bash -ec '\
   UID_N=$(id -u nithin); \
   loginctl enable-linger nithin; \
   systemctl start "user@${UID_N}.service"; \
   sudo -u nithin \
-    HOME=/home/nithin \
+    /usr/bin/env HOME=/home/nithin USER=nithin LOGNAME=nithin TMPDIR=/var/tmp \
     XDG_RUNTIME_DIR="/run/user/${UID_N}" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${UID_N}/bus" \
-    bash -c "set -o pipefail; curl -fsSL https://raw.githubusercontent.com/felstormrage/scripts/main/install-ssh-sync.sh | bash"; \
+    /usr/bin/install-ssh-sync; \
   touch /var/lib/ssh-sync-firstboot.done'
+TimeoutStartSec=10min
+Restart=on-failure
+RestartSec=2min
 
 [Install]
 WantedBy=multi-user.target
