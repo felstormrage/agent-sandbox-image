@@ -11,7 +11,7 @@ hostname: kairos-{{ trunc 4 .MachineID }}
 
 users:
   - name: nithin
-    passwd: "$6$zXuU5A/92hZpC8.Z$k9cEsXbhEgEELTQcU06Q2bJiy285rS4XnUqoCbIJZnPXut0cXQo4jGXf6ScLg5lfvtp3iD0O2y5g.BNkAFoRj0"
+    passwd: "__PASSWORD_HASH__"
     lock_passwd: false
     shell: /usr/bin/fish
     groups:
