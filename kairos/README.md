@@ -15,9 +15,12 @@ Included:
   related CLI tools
 - Homebrew installed on first boot into `/home/linuxbrew`
 - SSH key sync installed on first boot
+- Weekly automatic updates from the published `kairos-latest` image
 - Serial console on `ttyS0` and root SSH login disabled
 
-Kairos upgrades are managed separately from the OpenCode container images:
+Kairos updates are managed separately from the OpenCode container images. The
+host checks the published `kairos-latest` image automatically (see
+[Automatic updates](#automatic-updates)); to update immediately:
 
 ```sh
 sudo kairos-agent upgrade \
@@ -57,6 +60,46 @@ Set the repository secret `HOST_PASSWORD` to use a fixed password. If it is not
 set, each run generates a random password and records it in `credentials.txt`.
 To change the user or groups, edit `cloud-config.yaml`; CI replaces
 `__PASSWORD_HASH__` before booting AuroraBoot.
+
+## Automatic updates
+
+The image ships a `kairos-auto-update.timer`. It runs every Monday at 06:00 UTC
+with up to one hour of random delay, after the weekly image build. The timer
+reads the `org.opencontainers.image.version` label from
+`ghcr.io/felstormrage/agent-sandbox-image:kairos-latest` with `skopeo` and
+compares it with `KAIROS_VERSION` in `/etc/kairos-release`.
+
+- If the versions match, the check exits without downloading or rebooting.
+- If the remote version is newer, it runs
+  `kairos-agent upgrade --source oci:...:kairos-latest` and reboots into the
+  new image.
+- If the installed version is newer, the check leaves it alone. This prevents a
+  tagged release from being downgraded to a `main` build.
+- The timer is skipped when the system is booted into recovery mode.
+- Only the active system is upgraded. The recovery partition stays at the
+  version installed with the qcow2 unless you upgrade it manually with
+  `kairos-agent upgrade --recovery`.
+- The host reboots to activate the new image, so running containers and VMs are
+  interrupted.
+
+The check assumes the GHCR package is publicly readable. For a private package,
+configure registry credentials for both `skopeo` and `kairos-agent`, or the
+check and upgrade will fail.
+
+Because the timer is baked into the image, a node installed from an older qcow2
+needs one manual upgrade before automatic updates begin:
+
+```sh
+sudo kairos-agent upgrade \
+  --source oci:ghcr.io/felstormrage/agent-sandbox-image:kairos-latest
+```
+
+Disable or reschedule the timer with:
+
+```sh
+sudo systemctl disable --now kairos-auto-update.timer
+sudo systemctl edit kairos-auto-update.timer
+```
 
 ## Boot in Proxmox
 

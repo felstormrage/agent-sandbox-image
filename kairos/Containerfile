@@ -30,7 +30,7 @@ RUN /kairos-init -l info -s install --version "${VERSION}"
 RUN set -eux; \
     dnf -y install \
         qemu-guest-agent \
-        podman containernetworking-plugins nftables iproute jq \
+        podman containernetworking-plugins nftables iproute jq skopeo \
         curl wget fish tmux sudo openssh-server tar \
         bat ripgrep fd-find du-dust eza zoxide btop neovim \
         git gcc make patch unzip bzip2 which zlib-devel procps-ng file; \
@@ -124,19 +124,95 @@ ExecStart=/bin/bash -ec '\
 WantedBy=multi-user.target
 EOF
 
-# 11. Wire Homebrew and zoxide into fish automatically.
+# 11. Check the published Kairos image weekly and upgrade when its version
+# differs from the installed one. The version label lives in the image config,
+# so checking it only pulls a few KB instead of the whole image.
+RUN cat <<'EOF' > /usr/local/bin/kairos-auto-update
+#!/bin/bash
+set -euo pipefail
+
+image="ghcr.io/felstormrage/agent-sandbox-image:kairos-latest"
+release_file="/etc/kairos-release"
+
+current="$(sed -n 's/^KAIROS_VERSION=//p' "${release_file}" | tr -d '"')"
+current="${current#v}"
+
+remote="$(skopeo inspect "docker://${image}" | jq -r '.Labels["org.opencontainers.image.version"] // ""')"
+remote="${remote#v}"
+
+if [[ -z "${current}" ]]; then
+    echo "Could not read KAIROS_VERSION from ${release_file}" >&2
+    exit 1
+fi
+
+if [[ -z "${remote}" ]]; then
+    echo "Could not read the version label from ${image}" >&2
+    exit 1
+fi
+
+echo "Installed version: ${current}"
+echo "Remote version:    ${remote}"
+
+if [[ "${current}" == "${remote}" ]]; then
+    echo "System is up to date"
+    exit 0
+fi
+
+if [[ "$(printf '%s\n%s\n' "${current}" "${remote}" | sort -V | tail -n1)" != "${remote}" ]]; then
+    echo "Remote version ${remote} is not newer than installed ${current}; skipping"
+    exit 0
+fi
+
+echo "Upgrading to ${remote}"
+/usr/bin/kairos-agent upgrade --source "oci:${image}"
+echo "Upgrade staged; rebooting"
+/usr/bin/systemctl reboot --no-block
+EOF
+
+RUN chmod 0755 /usr/local/bin/kairos-auto-update
+
+RUN cat <<'EOF' > /etc/systemd/system/kairos-auto-update.service
+[Unit]
+Description=Install Kairos OS updates from GHCR
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/run/cos/recovery_mode
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock -n -E 0 /run/kairos-auto-update.lock /usr/local/bin/kairos-auto-update
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=2h
+EOF
+
+RUN cat <<'EOF' > /etc/systemd/system/kairos-auto-update.timer
+[Unit]
+Description=Weekly Kairos OS update check
+
+[Timer]
+OnCalendar=Mon *-*-* 06:00:00 UTC
+RandomizedDelaySec=1h
+Unit=kairos-auto-update.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+# 12. Wire Homebrew and zoxide into fish automatically.
 RUN mkdir -p /etc/fish/conf.d && \
     echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /etc/fish/conf.d/brew.fish && \
     echo 'zoxide init fish | source' > /etc/fish/conf.d/zoxide.fish
 
-# 12. Enable required services.
+# 13. Enable required services.
 RUN systemctl enable \
     qemu-guest-agent.service \
     sshd.service \
     serial-getty@ttyS0.service \
     brew-firstboot.service \
-    ssh-sync-firstboot.service
+    ssh-sync-firstboot.service \
+    kairos-auto-update.timer
 
-# 13. Finalize the Kairos initramfs and OS metadata after all custom files and
+# 14. Finalize the Kairos initramfs and OS metadata after all custom files and
 # runtime assets are in place.
 RUN /kairos-init -l info -s init --version "${VERSION}" && rm /kairos-init
