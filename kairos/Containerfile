@@ -217,6 +217,10 @@ fi
 
 echo "Upgrading to ${remote} (${digest})"
 /usr/bin/kairos-agent upgrade --source "oci:${image}@${digest}"
+/usr/bin/install -d -m 0755 /var/lib/kairos
+printf '%s %s %s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${remote}" "${digest}" \
+    > /var/lib/kairos/auto-update-pending
 echo "Upgrade staged; rebooting"
 /usr/bin/systemctl reboot --no-block
 EOF
@@ -255,7 +259,79 @@ Unit=kairos-auto-update.service
 WantedBy=timers.target
 EOF
 
-# 12. Wire Homebrew and zoxide into fish automatically.
+# 12. Verify a freshly updated image after it boots. Kairos boot assessment only
+# proves that the boot reached cloud-init; this checks the sandbox services and
+# falls back to the previous image if the new one is unhealthy.
+RUN cat <<'EOF' > /usr/bin/kairos-update-healthcheck
+#!/bin/bash
+set -euo pipefail
+
+marker="/var/lib/kairos/auto-update-pending"
+failed="${marker}.failed"
+
+if [[ ! -f "${marker}" ]]; then
+    exit 0
+fi
+
+fail() {
+    echo "Kairos update healthcheck failed: $*" >&2
+    mv -f "${marker}" "${failed}" || true
+    if /usr/bin/kairos-agent bootentry --select fallback; then
+        echo "Selected the fallback boot entry; rebooting" >&2
+        /usr/bin/systemctl reboot --no-block
+    else
+        echo "Could not select the fallback boot entry; manual intervention required" >&2
+    fi
+    exit 1
+}
+
+state="$(/usr/bin/systemctl is-system-running --wait || true)"
+if [[ "${state}" != "running" ]]; then
+    fail "system state is ${state:-unknown}"
+fi
+
+/usr/bin/systemctl is-active --quiet sshd || fail "sshd is not active"
+/usr/bin/systemctl is-active --quiet qemu-guest-agent || fail "qemu-guest-agent is not active"
+/usr/bin/podman info >/dev/null 2>&1 || fail "podman info failed"
+/usr/local/bin/runsc --version >/dev/null 2>&1 || fail "runsc is not runnable"
+/usr/local/bin/firecracker --version >/dev/null 2>&1 || fail "firecracker is not runnable"
+/usr/sbin/sshd -T 2>/dev/null | grep -q '^passwordauthentication no$' \
+    || fail "sshd password authentication is not disabled"
+
+echo "Kairos update healthcheck passed; clearing pending marker"
+rm -f "${marker}"
+EOF
+
+RUN chmod 0755 /usr/bin/kairos-update-healthcheck
+
+RUN cat <<'EOF' > /usr/lib/systemd/system/kairos-update-healthcheck.service
+[Unit]
+Description=Verify a Kairos update after reboot
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/kairos/auto-update-pending
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/kairos-update-healthcheck
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=15min
+EOF
+
+RUN cat <<'EOF' > /usr/lib/systemd/system/kairos-update-healthcheck.timer
+[Unit]
+Description=Run the Kairos update healthcheck after boot
+
+[Timer]
+OnBootSec=3min
+Unit=kairos-update-healthcheck.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+# 13. Wire Homebrew and zoxide into fish automatically.
 RUN mkdir -p /etc/fish/conf.d && \
     echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /etc/fish/conf.d/brew.fish && \
     echo 'zoxide init fish | source' > /etc/fish/conf.d/zoxide.fish
@@ -267,7 +343,8 @@ RUN systemctl enable \
     serial-getty@ttyS0.service \
     brew-firstboot.service \
     ssh-sync-firstboot.service \
-    kairos-auto-update.timer
+    kairos-auto-update.timer \
+    kairos-update-healthcheck.timer
 
 # 14. Finalize the Kairos initramfs and OS metadata after all custom files and
 # runtime assets are in place.

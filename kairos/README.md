@@ -85,6 +85,10 @@ compares it with `KAIROS_VERSION` in `/etc/kairos-release`.
   `kairos-agent upgrade --recovery`.
 - The host reboots to activate the new image, so running containers and VMs are
   interrupted.
+- About three minutes after the updated system boots, a healthcheck verifies the
+  system state, `sshd`, `qemu-guest-agent`, Podman, gVisor, and Firecracker. If
+  any check fails, it selects the fallback boot entry and reboots. A failed
+  marker is renamed so a broken image cannot cause a reboot loop.
 
 The check assumes the GHCR package is publicly readable. For a private package,
 configure registry credentials for both `skopeo` and `kairos-agent`, or the
