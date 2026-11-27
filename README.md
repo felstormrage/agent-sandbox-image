@@ -227,8 +227,10 @@ pre-installed qcow2 disk for Proxmox or another hypervisor:
   `fedora-minimal-<version>-amd64.qcow2`.
 
 Each artifact ZIP contains the qcow2, `SHA256SUMS`, and a `credentials.txt` for
-the `nithin` user. Set the repository secret `HOST_PASSWORD` to use a fixed
-password; otherwise each run generates a random one. See
+the `nithin` console login. Set the repository secret `HOST_SSH_PUBLIC_KEY` to
+the public key authorized for key-only SSH; it is required. Set
+`HOST_PASSWORD` to use a fixed console password; otherwise each run generates a
+random one. See
 [`kairos/README.md`](kairos/README.md#weekly-qcow2-artifact) and
 [`fedora-minimal/README.md`](fedora-minimal/README.md#weekly-qcow2-artifact) for
 the download, boot, and update flow.

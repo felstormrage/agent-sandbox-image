@@ -274,15 +274,24 @@ jobs:
         env:
           IMAGE_REF: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:kairos-${{ steps.image.outputs.version }}
           HOST_PASSWORD: ${{ secrets.HOST_PASSWORD }}
+          HOST_SSH_PUBLIC_KEY: ${{ secrets.HOST_SSH_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           docker pull "${IMAGE_REF}"
           mkdir -p build/kairos build/artifacts
 
+          public_key="${HOST_SSH_PUBLIC_KEY:-}"
+          if [ -z "${public_key}" ]; then
+            echo "HOST_SSH_PUBLIC_KEY is required for key-only SSH" >&2
+            exit 1
+          fi
+          printf '%s\n' "${public_key}" | ssh-keygen -l -f - >/dev/null
+
           password="${HOST_PASSWORD:-$(openssl rand -hex 16)}"
           echo "::add-mask::${password}"
           hash="$(printf '%s' "${password}" | openssl passwd -6 -stdin)"
-          sed "s|__PASSWORD_HASH__|${hash}|g" \
+          sed -e "s|__PASSWORD_HASH__|${hash}|g" \
+              -e "s|__SSH_PUBLIC_KEY__|${public_key}|g" \
             kairos/cloud-config.yaml > build/kairos-cloud-config.yaml
 
           docker run --rm --privileged \
@@ -416,15 +425,24 @@ jobs:
         env:
           IMAGE_REF: ${{ steps.source.outputs.ref }}
           HOST_PASSWORD: ${{ secrets.HOST_PASSWORD }}
+          HOST_SSH_PUBLIC_KEY: ${{ secrets.HOST_SSH_PUBLIC_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p build/fedora-minimal build/artifacts
 
+          public_key="${HOST_SSH_PUBLIC_KEY:-}"
+          if [ -z "${public_key}" ]; then
+            echo "HOST_SSH_PUBLIC_KEY is required for key-only SSH" >&2
+            exit 1
+          fi
+          printf '%s\n' "${public_key}" | ssh-keygen -l -f - >/dev/null
+
           password="${HOST_PASSWORD:-$(openssl rand -hex 16)}"
           echo "::add-mask::${password}"
           hash="$(printf '%s' "${password}" | openssl passwd -6 -stdin)"
-          sed "s|__PASSWORD_HASH__|${hash}|g" \
+          sed -e "s|__PASSWORD_HASH__|${hash}|g" \
+              -e "s|__SSH_PUBLIC_KEY__|${public_key}|g" \
             fedora-minimal/config.toml > build/fedora-minimal-config.toml
 
           printf '%s' "${GH_TOKEN}" | sudo podman login ghcr.io \
