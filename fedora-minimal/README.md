@@ -1,12 +1,16 @@
 # Fedora minimal sandbox host image
 
-A minimal Fedora `bootc` host. It keeps the immutable bootc update path, the
-serial console, `fish`, Homebrew, and SSH key sync, but deliberately omits
-Podman, gVisor, Firecracker, and the container-networking stack.
+A Fedora `bootc` host with a minimal sandbox tool set. It keeps the immutable
+bootc update path, the serial console, `fish`, Homebrew, and SSH key sync. It
+does not add gVisor, Firecracker, or the Kairos container-networking stack, but
+the standard `fedora-bootc` base already includes Podman, Skopeo, rpm-ostree,
+toolbox, and common server tooling.
 
 Included:
 
 - Fedora `bootc` with `bootc-fetch-apply-updates.timer` moved to 04:00 daily
+- Standard `fedora-bootc` base packages, including Podman, Skopeo, rpm-ostree,
+  toolbox, chrony, and nftables
 - `fish`, `tmux`, Neovim, ripgrep, `fd`, `bat`, `eza`, `zoxide`, `btop`, and
   related CLI tools
 - Homebrew installed on first boot into `/home/linuxbrew`
@@ -82,5 +86,6 @@ CI replaces `__PASSWORD_HASH__` and `__SSH_PUBLIC_KEY__` before invoking
    `HOST_SSH_PUBLIC_KEY`. The first boot installs Homebrew and the SSH key sync
    service.
 
-This image does not include Podman, gVisor, or Firecracker and does not require
-KVM; use the Kairos image when you need those.
+This image does not include gVisor or Firecracker and does not require KVM. It
+does include the standard bootc/Podman tooling from the base image; use the
+Kairos image when you need the full container and virtualization stack.

@@ -1,10 +1,12 @@
 # syntax=docker/dockerfile:1
 
-# Minimal Fedora bootc sandbox host.
+# Fedora bootc sandbox host with a minimal sandbox tool set.
 #
 # This variant keeps the immutable bootc update path, serial console, fish,
-# Homebrew, and SSH key sync, but deliberately omits Podman, gVisor,
-# Firecracker, and the container-networking stack.
+# Homebrew, and SSH key sync. The standard fedora-bootc base already includes
+# Podman, Skopeo, rpm-ostree, toolbox, and common server tooling; this image
+# deliberately does not add the gVisor, Firecracker, or Kairos
+# container-networking stack.
 # hadolint ignore=DL3007
 FROM quay.io/fedora/fedora-bootc:latest
 
@@ -13,7 +15,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG VERSION=0.1.0
 
 LABEL org.opencontainers.image.title="fedora-minimal-sandbox" \
-      org.opencontainers.image.description="Minimal Fedora bootc sandbox host with fish, Homebrew, and SSH key sync" \
+      org.opencontainers.image.description="Fedora bootc sandbox host with fish, Homebrew, and SSH key sync" \
       org.opencontainers.image.version="${VERSION}"
 
 # 1. Core system, CLI tools, fish, and Homebrew prerequisites.

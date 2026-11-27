@@ -6,8 +6,8 @@ This repository builds three image families:
   application workspaces.
 - **Kairos full sandbox host** (`kairos-latest`), a Fedora-based Kairos BYOI
   image with Podman, gVisor, Firecracker, Homebrew, and SSH key sync.
-- **Fedora minimal bootc host** (`fedora-minimal-latest`), the same sandbox
-  tooling without the container/virtualization stack.
+- **Fedora bootc sandbox host** (`fedora-minimal-latest`), the CLI/Homebrew/SSH
+  tooling on the standard Fedora bootc base, without gVisor and Firecracker.
 
 The two host images are separate from the OpenCode containers and each lives in
 its own folder. Both are rebuilt weekly with buildable qcow2 artifacts. See
@@ -21,7 +21,7 @@ credential details.
   families.
 - `opencode/` contains the minimal and CMS sandbox Dockerfiles.
 - `kairos/` contains the full Kairos host image and its cloud config.
-- `fedora-minimal/` contains the minimal bootc host image and its
+- `fedora-minimal/` contains the Fedora bootc host image and its
   `bootc-image-builder` config.
 
 ## OpenCode sandbox image
@@ -139,17 +139,19 @@ docker build --platform linux/amd64 \
   --build-arg VERSION=0.1.0 \
   -t agent-sandbox-kairos .
 
-# Minimal Fedora bootc host
+# Fedora bootc host
 docker build --platform linux/amd64 \
   -f fedora-minimal/Containerfile \
   --build-arg VERSION=0.1.0 \
   -t agent-sandbox-fedora-minimal .
 ```
 
-Both images create a `nithin` user in `wheel` with passwordless sudo. The
-first boot installs Homebrew into `/home/linuxbrew` and installs the SSH key
-sync helper. The Kairos image also includes Podman, gVisor, and Firecracker;
-the Fedora minimal image keeps only bootc and the CLI tooling.
+Both images create a `nithin` user in `wheel` with passwordless sudo and inject
+an SSH public key for key-only login. The first boot installs Homebrew into
+`/home/linuxbrew` and installs the SSH key sync helper. The Kairos image also
+includes gVisor and Firecracker plus the container-networking stack. The Fedora
+image keeps the standard bootc base, including Podman and Skopeo, and adds the
+CLI tooling without the gVisor/Firecracker stack.
 
 Each host folder documents its qcow2 artifact, boot settings, and update path:
 
