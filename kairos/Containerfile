@@ -16,6 +16,11 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG VERSION=0.1.0
 
+# Pinned cosign used by the automatic updater to verify the image before
+# staging an upgrade. Update the version and checksum together.
+ARG COSIGN_VERSION=v3.1.6
+ARG COSIGN_SHA256=318a99ade4156a0c4113aa983b46c0a0830fa7896a096c63121ee47b610a94c6
+
 LABEL org.opencontainers.image.title="kairos-sandbox" \
       org.opencontainers.image.description="Fedora-based Kairos sandbox host with gVisor, Firecracker, Podman, Homebrew, and SSH key sync" \
       org.opencontainers.image.version="${VERSION}"
@@ -65,6 +70,17 @@ RUN set -eux; \
 # 6. Enable IPv4 forwarding for Firecracker TAP/NAT networking.
 RUN mkdir -p /etc/sysctl.d && \
     echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-firecracker.conf
+
+# Install cosign so the automatic updater can verify image signatures before
+# staging an upgrade.
+RUN set -eux; \
+    arch="$(uname -m)"; \
+    [ "${arch}" = "x86_64" ] || { echo "cosign is only wired for x86_64" >&2; exit 1; }; \
+    curl -fsSL "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64" \
+        -o /usr/bin/cosign; \
+    echo "${COSIGN_SHA256}  /usr/bin/cosign" | sha256sum -c -; \
+    chmod 0755 /usr/bin/cosign; \
+    cosign version
 
 # 7. Harden SSH (disable root login) and cap journald log size at 200M.
 RUN mkdir -p /etc/ssh/sshd_config.d /etc/systemd/journald.conf.d && \
@@ -136,38 +152,71 @@ set -euo pipefail
 
 image="ghcr.io/felstormrage/agent-sandbox-image:kairos-latest"
 release_file="/etc/kairos-release"
+mode="${1:---upgrade}"
+# Keyless signatures are issued to this repository's build workflow on main.
+# Override these for a fork or a different signing identity.
+identity_regexp="${KAIROS_UPDATE_COSIGN_IDENTITY:-^https://github\.com/felstormrage/agent-sandbox-image/\.github/workflows/build\.yml@refs/heads/main$}"
+oidc_issuer="${KAIROS_UPDATE_COSIGN_ISSUER:-https://token.actions.githubusercontent.com}"
+
+case "${mode}" in
+    --check|--upgrade) ;;
+    *)
+        echo "Usage: $0 [--check|--upgrade]" >&2
+        exit 2
+        ;;
+esac
 
 current="$(sed -n 's/^KAIROS_VERSION=//p' "${release_file}" | tr -d '"')"
 current="${current#v}"
-
-remote="$(skopeo inspect "docker://${image}" | jq -r '.Labels["org.opencontainers.image.version"] // ""')"
-remote="${remote#v}"
 
 if [[ -z "${current}" ]]; then
     echo "Could not read KAIROS_VERSION from ${release_file}" >&2
     exit 1
 fi
 
+inspect="$(skopeo inspect --retry-times 3 --retry-delay 10s "docker://${image}")"
+remote="$(jq -r '.Labels["org.opencontainers.image.version"] // ""' <<<"${inspect}")"
+digest="$(jq -r '.Digest // ""' <<<"${inspect}")"
+remote="${remote#v}"
+
 if [[ -z "${remote}" ]]; then
     echo "Could not read the version label from ${image}" >&2
     exit 1
 fi
 
+if [[ -z "${digest}" ]]; then
+    echo "Could not read the digest from ${image}" >&2
+    exit 1
+fi
+
 echo "Installed version: ${current}"
 echo "Remote version:    ${remote}"
+echo "Remote digest:     ${digest}"
 
 if [[ "${current}" == "${remote}" ]]; then
     echo "System is up to date"
     exit 0
 fi
 
+# CI versions increment monotonically, so version sort is sufficient for this
+# channel. Tagged releases must not be older than the installed build.
 if [[ "$(printf '%s\n%s\n' "${current}" "${remote}" | sort -V | tail -n1)" != "${remote}" ]]; then
     echo "Remote version ${remote} is not newer than installed ${current}; skipping"
     exit 0
 fi
 
-echo "Upgrading to ${remote}"
-/usr/bin/kairos-agent upgrade --source "oci:${image}"
+cosign verify \
+    --certificate-identity-regexp "${identity_regexp}" \
+    --certificate-oidc-issuer "${oidc_issuer}" \
+    "${image}@${digest}" >/dev/null
+
+if [[ "${mode}" == "--check" ]]; then
+    echo "Update available and signature verified; not upgrading in check mode"
+    exit 0
+fi
+
+echo "Upgrading to ${remote} (${digest})"
+/usr/bin/kairos-agent upgrade --source "oci:${image}@${digest}"
 echo "Upgrade staged; rebooting"
 /usr/bin/systemctl reboot --no-block
 EOF
@@ -186,7 +235,7 @@ ConditionPathExists=!/run/cos/live_mode
 Type=oneshot
 Environment=TMPDIR=/var/lib/kairos/tmp
 ExecStartPre=/usr/bin/install -d -m 0755 /var/lib/kairos/tmp
-ExecStart=/usr/bin/flock -n -E 0 /run/kairos-auto-update.lock /usr/bin/kairos-auto-update
+ExecStart=/usr/bin/flock -n -E 0 /run/kairos-auto-update.lock /usr/bin/kairos-auto-update --upgrade
 Nice=10
 IOSchedulingClass=idle
 TimeoutStartSec=2h

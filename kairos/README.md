@@ -72,9 +72,11 @@ picks up a late or re-run build without waiting another week. The timer reads th
 compares it with `KAIROS_VERSION` in `/etc/kairos-release`.
 
 - If the versions match, the check exits without downloading or rebooting.
-- If the remote version is newer, it runs
-  `kairos-agent upgrade --source oci:...:kairos-latest` and reboots into the
-  new image.
+- If the remote version is newer, it verifies the image's keyless cosign
+  signature, resolves the remote digest, then runs
+  `kairos-agent upgrade --source oci:...@sha256:...` and reboots into that exact
+  image. The digest pin also closes the race where `kairos-latest` moves between
+  the version check and the upgrade.
 - If the installed version is newer, the check leaves it alone. This prevents a
   tagged release from being downgraded to a `main` build.
 - The timer is skipped when the system is booted into recovery mode.
@@ -87,6 +89,18 @@ compares it with `KAIROS_VERSION` in `/etc/kairos-release`.
 The check assumes the GHCR package is publicly readable. For a private package,
 configure registry credentials for both `skopeo` and `kairos-agent`, or the
 check and upgrade will fail.
+
+To run the version, digest, and signature checks without upgrading:
+
+```sh
+sudo /usr/bin/kairos-auto-update --check
+```
+
+To inspect a failed run:
+
+```sh
+sudo journalctl -u kairos-auto-update.service
+```
 
 Because the timer is baked into the image, a node installed from an older qcow2
 needs one manual upgrade before automatic updates begin:
