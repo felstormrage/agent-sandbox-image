@@ -20,6 +20,10 @@ Included:
 - SELinux enabled in permissive mode; move to enforcing after validating the
   sandbox stack
 
+The Kairos image does not enable a default-deny host firewall because Podman,
+gVisor, and Firecracker networking need explicit rules. Keep the VM behind the
+Proxmox firewall or a VPN, or add and test your own nftables policy.
+
 Kairos updates are managed separately from the OpenCode container images. The
 host checks the published `kairos-latest` image automatically (see
 [Automatic updates](#automatic-updates)); to update immediately:
