@@ -15,7 +15,7 @@ Included:
   related CLI tools
 - Homebrew installed on first boot into `/home/linuxbrew`
 - SSH key sync installed on first boot
-- Weekly automatic updates from the published `kairos-latest` image
+- Automatic updates from the published `kairos-latest` image
 - Serial console on `ttyS0` and root SSH login disabled
 
 Kairos updates are managed separately from the OpenCode container images. The
@@ -63,9 +63,11 @@ To change the user or groups, edit `cloud-config.yaml`; CI replaces
 
 ## Automatic updates
 
-The image ships a `kairos-auto-update.timer`. It runs every Monday at 06:00 UTC
-with up to one hour of random delay, after the weekly image build. The timer
-reads the `org.opencontainers.image.version` label from
+The image ships a `kairos-auto-update.timer`. It checks once a day at 06:00 UTC
+with up to one hour of random delay and catches up after downtime. The weekly
+image build means an update normally appears on Monday, but the daily check also
+picks up a late or re-run build without waiting another week. The timer reads the
+`org.opencontainers.image.version` label from
 `ghcr.io/felstormrage/agent-sandbox-image:kairos-latest` with `skopeo` and
 compares it with `KAIROS_VERSION` in `/etc/kairos-release`.
 

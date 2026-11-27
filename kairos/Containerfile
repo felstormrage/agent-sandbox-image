@@ -124,10 +124,13 @@ ExecStart=/bin/bash -ec '\
 WantedBy=multi-user.target
 EOF
 
-# 11. Check the published Kairos image weekly and upgrade when its version
+# 11. Check the published Kairos image daily and upgrade when its version
 # differs from the installed one. The version label lives in the image config,
 # so checking it only pulls a few KB instead of the whole image.
-RUN cat <<'EOF' > /usr/local/bin/kairos-auto-update
+#
+# Keep this under /usr: /usr/local is the persistent partition on Kairos, so
+# image content written there is hidden at runtime.
+RUN cat <<'EOF' > /usr/bin/kairos-auto-update
 #!/bin/bash
 set -euo pipefail
 
@@ -169,30 +172,34 @@ echo "Upgrade staged; rebooting"
 /usr/bin/systemctl reboot --no-block
 EOF
 
-RUN chmod 0755 /usr/local/bin/kairos-auto-update
+RUN chmod 0755 /usr/bin/kairos-auto-update
 
-RUN cat <<'EOF' > /etc/systemd/system/kairos-auto-update.service
+RUN cat <<'EOF' > /usr/lib/systemd/system/kairos-auto-update.service
 [Unit]
 Description=Install Kairos OS updates from GHCR
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=!/run/cos/recovery_mode
+ConditionPathExists=!/run/cos/live_mode
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/flock -n -E 0 /run/kairos-auto-update.lock /usr/local/bin/kairos-auto-update
+Environment=TMPDIR=/var/lib/kairos/tmp
+ExecStartPre=/usr/bin/install -d -m 0755 /var/lib/kairos/tmp
+ExecStart=/usr/bin/flock -n -E 0 /run/kairos-auto-update.lock /usr/bin/kairos-auto-update
 Nice=10
 IOSchedulingClass=idle
 TimeoutStartSec=2h
 EOF
 
-RUN cat <<'EOF' > /etc/systemd/system/kairos-auto-update.timer
+RUN cat <<'EOF' > /usr/lib/systemd/system/kairos-auto-update.timer
 [Unit]
-Description=Weekly Kairos OS update check
+Description=Daily Kairos OS update check
 
 [Timer]
-OnCalendar=Mon *-*-* 06:00:00 UTC
+OnCalendar=*-*-* 06:00:00 UTC
 RandomizedDelaySec=1h
+Persistent=true
 Unit=kairos-auto-update.service
 
 [Install]
