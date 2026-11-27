@@ -310,9 +310,19 @@ jobs:
           password="${HOST_PASSWORD:-$(openssl rand -hex 16)}"
           echo "::add-mask::${password}"
           hash="$(printf '%s' "${password}" | openssl passwd -6 -stdin)"
-          sed -e "s|__PASSWORD_HASH__|${hash}|g" \
-              -e "s|__SSH_PUBLIC_KEY__|${public_key}|g" \
-            kairos/cloud-config.yaml > build/kairos-cloud-config.yaml
+          TEMPLATE=kairos/cloud-config.yaml \
+          OUTPUT=build/kairos-cloud-config.yaml \
+          PASSWORD_HASH="${hash}" \
+          SSH_PUBLIC_KEY="${public_key}" \
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          text = Path(os.environ["TEMPLATE"]).read_text()
+          text = text.replace("__PASSWORD_HASH__", os.environ["PASSWORD_HASH"])
+          text = text.replace("__SSH_PUBLIC_KEY__", os.environ["SSH_PUBLIC_KEY"])
+          Path(os.environ["OUTPUT"]).write_text(text)
+          PY
 
           docker run --rm --privileged \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -486,9 +496,19 @@ jobs:
           password="${HOST_PASSWORD:-$(openssl rand -hex 16)}"
           echo "::add-mask::${password}"
           hash="$(printf '%s' "${password}" | openssl passwd -6 -stdin)"
-          sed -e "s|__PASSWORD_HASH__|${hash}|g" \
-              -e "s|__SSH_PUBLIC_KEY__|${public_key}|g" \
-            fedora-minimal/config.toml > build/fedora-minimal-config.toml
+          TEMPLATE=fedora-minimal/config.toml \
+          OUTPUT=build/fedora-minimal-config.toml \
+          PASSWORD_HASH="${hash}" \
+          SSH_PUBLIC_KEY="${public_key}" \
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          text = Path(os.environ["TEMPLATE"]).read_text()
+          text = text.replace("__PASSWORD_HASH__", os.environ["PASSWORD_HASH"])
+          text = text.replace("__SSH_PUBLIC_KEY__", os.environ["SSH_PUBLIC_KEY"])
+          Path(os.environ["OUTPUT"]).write_text(text)
+          PY
 
           printf '%s' "${GH_TOKEN}" | sudo podman login ghcr.io \
             -u "${{ github.actor }}" --password-stdin
