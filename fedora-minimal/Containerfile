@@ -42,11 +42,13 @@ RUN find /usr/lib/tmpfiles.d /usr/lib/systemd/system -type f -exec sed -i "s/\${
 # 11. Add bootc install configuration specifying filesystem defaults for image building.
 RUN mkdir -p /usr/lib/bootc/install && \
     cat > /usr/lib/bootc/install/99-fedora-install.toml <<'EOF'
-[install]
-filesystem = [
-    { mountpoint = "/", type = "xfs" },
-    { mountpoint = "/boot", type = "ext4" },
-]
+[[install.filesystem]]
+mountpoint = "/"
+type = "xfs"
+
+[[install.filesystem]]
+mountpoint = "/boot"
+type = "ext4"
 EOF
 
 # 12. Enable required services and timers, and disable kdump on small VMs.
