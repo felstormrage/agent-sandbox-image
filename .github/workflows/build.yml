@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
   packages: write
   id-token: write
 
@@ -126,7 +126,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}/opencode
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -199,7 +199,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ${{ env.REGISTRY }}/${{ needs.build.outputs.image }}
+          images: ${{ env.REGISTRY }}/${{ needs.build.outputs.image }}/cms
           tags: |
             type=raw,value=cms-latest,enable={{is_default_branch}}
             type=ref,event=branch,suffix=-cms
@@ -280,7 +280,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}/kairos
           tags: |
             type=raw,value=kairos-${{ steps.image.outputs.version }}
             type=ref,event=branch,prefix=kairos-branch-
@@ -470,7 +470,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
-          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}/fedora-minimal
           tags: |
             type=raw,value=fedora-minimal-${{ steps.image.outputs.version }}
             type=ref,event=branch,prefix=fedora-minimal-branch-
@@ -629,3 +629,131 @@ jobs:
           path: build/artifacts
           if-no-files-found: error
           retention-days: 30
+
+  publish-release:
+    name: Publish release with QCOW2 artifacts
+    needs: [build-kairos, build-fedora-minimal]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Determine version and release tag
+        id: version
+        run: |
+          set -euo pipefail
+          
+          # Use git tag if available, otherwise use short commit SHA
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="snapshot-${{ github.sha }}"
+          fi
+          
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_name=Build ${TAG}" >> "$GITHUB_OUTPUT"
+          
+          # Set prerelease flag for snapshots
+          if [[ "${TAG}" == snapshot-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
+        with:
+          path: artifacts
+
+      - name: Prepare release artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          
+          # Copy QCOW2 files and checksums
+          find artifacts -name "*.qcow2" -exec cp {} release-artifacts/ \;
+          find artifacts -name "SHA256SUMS" -exec cp {} release-artifacts/ \;
+          find artifacts -name "credentials.txt" -exec cp {} release-artifacts/credentials-{} \; 2>/dev/null || true
+          
+          # List what we're releasing
+          echo "Release artifacts:"
+          ls -lh release-artifacts/ || echo "No artifacts found"
+
+      - name: Create release with artifacts
+        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.release_name }}
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          files: release-artifacts/*
+          body: |
+            ## Build Artifacts
+
+            This release contains VM disk images (QCOW2 format) for the sandbox environment.
+
+            ### Contents
+            - **kairos-\*.qcow2** - Fedora-based Kairos sandbox host
+            - **fedora-minimal-\*.qcow2** - Minimal Fedora bootc image
+            - **SHA256SUMS** - Checksums for verification
+            - **credentials-\*.txt** - User credentials for the images
+
+            ### Usage
+
+            Boot with QEMU:
+            ```bash
+            qemu-system-x86_64 -m 4G -enable-kvm kairos-*.qcow2
+            qemu-system-x86_64 -m 2G -enable-kvm fedora-minimal-*.qcow2
+            ```
+
+            Verify image integrity:
+            ```bash
+            sha256sum -c SHA256SUMS
+            ```
+
+            Credentials are in the credentials-*.txt files. Default user is `nithin`.
+
+            ### Container Images
+
+            Additionally, container images are available in separate packages:
+            - **OpenCode**: `ghcr.io/felstormrage/agent-sandbox-image/opencode:${{ steps.version.outputs.tag }}`
+            - **OpenCode CMS**: `ghcr.io/felstormrage/agent-sandbox-image/cms:${{ steps.version.outputs.tag }}`
+            - **Kairos**: `ghcr.io/felstormrage/agent-sandbox-image/kairos:${{ steps.version.outputs.tag }}`
+            - **Fedora Minimal**: `ghcr.io/felstormrage/agent-sandbox-image/fedora-minimal:${{ steps.version.outputs.tag }}`
+
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+          draft: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  cleanup-old-images:
+    name: Clean up old container images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    steps:
+      - name: Delete untagged container images older than 30 days
+        uses: actions/delete-package-versions@v4
+        with:
+          package-name: agent-sandbox-image
+          package-type: container
+          min-versions-to-keep: 10
+          delete-only-untagged-versions: false
+          delete-only-pre-release-versions: false
+        continue-on-error: true
+
+      - name: Prune container registry
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+            
+            console.log(`Cleaning images older than ${thirtyDaysAgo.toISOString()}`);
+            console.log('Note: Container image cleanup requires manual deletion via GitHub UI or ghcr.io CLI');
+            console.log('Use: gh api repos/' + owner + '/' + repo + '/packages?package_type=container');

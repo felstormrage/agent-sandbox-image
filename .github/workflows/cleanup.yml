@@ -1,0 +1,144 @@
+name: Cleanup old artifacts and images
+
+on:
+  schedule:
+    # Run cleanup daily at 2 AM UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  cleanup-artifacts:
+    name: Delete old GitHub Actions artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Delete artifacts older than 30 days
+        uses: geekyeggo/delete-artifact@v2
+        with:
+          name: "*"
+          useGlob: true
+          minLifetimeDays: 30
+
+  cleanup-releases:
+    name: Delete old snapshot releases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Delete releases older than 30 days
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+            
+            console.log(`Deleting snapshot releases older than ${thirtyDaysAgo.toISOString()}`);
+            
+            const releases = await github.rest.repos.listReleases({
+              owner,
+              repo,
+              per_page: 100
+            });
+            
+            let deletedCount = 0;
+            for (const release of releases.data) {
+              const releaseDate = new Date(release.created_at);
+              
+              // Only delete prerelease snapshot builds, keep versioned releases
+              if (release.prerelease && release.tag_name.startsWith('snapshot-') && releaseDate < thirtyDaysAgo) {
+                console.log(`Deleting release: ${release.tag_name} (created ${releaseDate.toISOString()})`);
+                try {
+                  await github.rest.repos.deleteRelease({
+                    owner,
+                    repo,
+                    release_id: release.id
+                  });
+                  deletedCount++;
+                } catch (error) {
+                  console.error(`Failed to delete release ${release.tag_name}:`, error.message);
+                }
+              }
+            }
+            
+            console.log(`Total snapshot releases deleted: ${deletedCount}`);
+
+  cleanup-container-images:
+    name: Delete old container images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Delete old container image versions
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+            const minVersionsToKeep = 10;
+            
+            console.log(`Cleaning container images older than ${thirtyDaysAgo.toISOString()}`);
+            console.log(`Keeping at least ${minVersionsToKeep} recent versions per package`);
+            
+            // List of package names to clean up
+            const packages = ['opencode', 'cms', 'kairos', 'fedora-minimal'];
+            
+            for (const pkgName of packages) {
+              console.log(`\nProcessing package: ${pkgName}`);
+              
+              try {
+                const versions = await github.rest.packages.getAllPackageVersions({
+                  package_type: 'container',
+                  package_name: `agent-sandbox-image/${pkgName}`,
+                  username: owner,
+                  state: 'active',
+                  per_page: 100
+                });
+                
+                // Sort by created_at, newest first
+                const sorted = versions.data.sort((a, b) => 
+                  new Date(b.created_at) - new Date(a.created_at)
+                );
+                
+                let deletedCount = 0;
+                for (let i = 0; i < sorted.length; i++) {
+                  const version = sorted[i];
+                  const createdDate = new Date(version.created_at);
+                  
+                  // Keep minimum versions OR keep anything newer than 30 days
+                  if (i < minVersionsToKeep || createdDate > thirtyDaysAgo) {
+                    console.log(`  KEEP: v${i + 1} - ${version.tags || 'untagged'} (${createdDate.toISOString()})`);
+                    continue;
+                  }
+                  
+                  console.log(`  DELETE: ${version.tags || 'untagged'} (${createdDate.toISOString()})`);
+                  try {
+                    await github.rest.packages.deletePackageVersion({
+                      package_type: 'container',
+                      package_name: `agent-sandbox-image/${pkgName}`,
+                      username: owner,
+                      package_version_id: version.id
+                    });
+                    deletedCount++;
+                  } catch (error) {
+                    console.error(`    Failed:`, error.message);
+                  }
+                }
+                
+                console.log(`  Total versions deleted: ${deletedCount}`);
+              } catch (error) {
+                console.log(`  Skipping ${pkgName}: ${error.message}`);
+              }
+            }
