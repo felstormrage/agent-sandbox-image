@@ -313,7 +313,7 @@ jobs:
       - name: Sign Kairos image
         if: github.event_name != 'pull_request'
         env:
-          IMAGE: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          IMAGE: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}/kairos
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           set -euo pipefail
@@ -501,7 +501,7 @@ jobs:
       - name: Sign Fedora minimal image
         if: github.event_name != 'pull_request'
         env:
-          IMAGE: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
+          IMAGE: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}/fedora-minimal
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           set -euo pipefail
