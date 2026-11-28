@@ -6,17 +6,28 @@ sha256="34090c61925f5d5c4caca7f1f7089efac33056b1603b4d62b4671d8d22f28fb3"
 tmp="$(mktemp -p /var/tmp homebrew-install.XXXXXX)"
 trap 'rm -f "${tmp}"' EXIT
 
+echo "Installing Homebrew..."
 curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL "${url}" -o "${tmp}"
 echo "${sha256}  ${tmp}" | sha256sum -c -
-NONINTERACTIVE=1 bash "${tmp}"
+NONINTERACTIVE=1 bash "${tmp}" || { echo "Homebrew installation failed"; exit 1; }
 
 # Install curated set of developer tools via Homebrew.
 # These are mutable tools that users can customize after boot.
 # See /etc/homebrew-tools.txt for the list.
 if [ -f /etc/homebrew-tools.txt ]; then
   echo "Installing Homebrew tools..."
-  # Eval Homebrew environment variables to ensure brew is in PATH
-  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-  # shellcheck disable=SC2046
-  /home/linuxbrew/.linuxbrew/bin/brew install $(cat /etc/homebrew-tools.txt) || true
+  brew_bin="/home/linuxbrew/.linuxbrew/bin/brew"
+  if [ -x "${brew_bin}" ]; then
+    # Eval Homebrew environment variables to ensure brew is in PATH
+    eval "$("${brew_bin}" shellenv)" || true
+    # Install tools, don't fail if one fails
+    "${brew_bin}" install $(cat /etc/homebrew-tools.txt) || true
+    echo "Homebrew tools installation completed"
+  else
+    echo "Warning: Homebrew binary not found at ${brew_bin}"
+  fi
+else
+  echo "Warning: /etc/homebrew-tools.txt not found"
 fi
+
+echo "Homebrew setup complete"
