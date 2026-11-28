@@ -7,6 +7,10 @@
 #
 # and substitute it before passing this file to bootc-image-builder.
 
+[distribution]
+name = "fedora"
+version = "45"
+
 [[customizations.user]]
 name = "nithin"
 description = "Sandbox administrator"

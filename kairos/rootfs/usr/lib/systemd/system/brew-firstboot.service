@@ -6,7 +6,7 @@ ConditionPathExists=!/home/linuxbrew/.linuxbrew/bin/brew
 StartLimitIntervalSec=0
 
 [Service]
-Type=exec
+Type=oneshot
 User=${USERNAME}
 Environment=NONINTERACTIVE=1
 Environment=HOME=/home/${USERNAME}
@@ -15,6 +15,7 @@ ExecStart=/usr/bin/install-homebrew
 TimeoutStartSec=30min
 Restart=on-failure
 RestartSec=2min
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
