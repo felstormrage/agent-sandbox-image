@@ -44,8 +44,8 @@ RUN mkdir -p /usr/lib/bootc/install && \
     cat > /usr/lib/bootc/install/99-fedora-install.toml <<'EOF'
 [install]
 filesystem = [
-    { mountpoint = "/", type = "xfs", size = "10 GiB" },
-    { mountpoint = "/boot", type = "ext4", size = "1 GiB" },
+    { mountpoint = "/", type = "xfs" },
+    { mountpoint = "/boot", type = "ext4" },
 ]
 EOF
 
