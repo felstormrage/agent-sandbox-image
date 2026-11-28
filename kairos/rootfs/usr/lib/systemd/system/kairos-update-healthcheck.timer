@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the Kairos update healthcheck after boot
+
+[Timer]
+OnBootSec=3min
+Unit=kairos-update-healthcheck.service
+
+[Install]
+WantedBy=timers.target

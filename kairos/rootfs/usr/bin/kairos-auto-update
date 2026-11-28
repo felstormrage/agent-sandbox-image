@@ -1,0 +1,76 @@
+#!/bin/bash
+set -euo pipefail
+
+image="ghcr.io/felstormrage/agent-sandbox-image:kairos-latest"
+release_file="/etc/kairos-release"
+mode="${1:---upgrade}"
+# Keyless signatures are issued to this repository's build workflow on main.
+# Override these for a fork or a different signing identity.
+identity_regexp="${KAIROS_UPDATE_COSIGN_IDENTITY:-^https://github\.com/felstormrage/agent-sandbox-image/\.github/workflows/build\.yml@refs/heads/main$}"
+oidc_issuer="${KAIROS_UPDATE_COSIGN_ISSUER:-https://token.actions.githubusercontent.com}"
+
+case "${mode}" in
+    --check|--upgrade) ;;
+    *)
+        echo "Usage: $0 [--check|--upgrade]" >&2
+        exit 2
+        ;;
+esac
+
+current="$(sed -n 's/^KAIROS_VERSION=//p' "${release_file}" | tr -d '"')"
+current="${current#v}"
+
+if [[ -z "${current}" ]]; then
+    echo "Could not read KAIROS_VERSION from ${release_file}" >&2
+    exit 1
+fi
+
+inspect="$(skopeo inspect --retry-times 3 --retry-delay 10s "docker://${image}")"
+remote="$(jq -r '.Labels["org.opencontainers.image.version"] // ""' <<<"${inspect}")"
+digest="$(jq -r '.Digest // ""' <<<"${inspect}")"
+remote="${remote#v}"
+
+if [[ -z "${remote}" ]]; then
+    echo "Could not read the version label from ${image}" >&2
+    exit 1
+fi
+
+if [[ -z "${digest}" ]]; then
+    echo "Could not read the digest from ${image}" >&2
+    exit 1
+fi
+
+echo "Installed version: ${current}"
+echo "Remote version:    ${remote}"
+echo "Remote digest:     ${digest}"
+
+if [[ "${current}" == "${remote}" ]]; then
+    echo "System is up to date"
+    exit 0
+fi
+
+# CI versions increment monotonically, so version sort is sufficient for this
+# channel. Tagged releases must not be older than the installed build.
+if [[ "$(printf '%s\n%s\n' "${current}" "${remote}" | sort -V | tail -n1)" != "${remote}" ]]; then
+    echo "Remote version ${remote} is not newer than installed ${current}; skipping"
+    exit 0
+fi
+
+cosign verify \
+    --certificate-identity-regexp "${identity_regexp}" \
+    --certificate-oidc-issuer "${oidc_issuer}" \
+    "${image}@${digest}" >/dev/null
+
+if [[ "${mode}" == "--check" ]]; then
+    echo "Update available and signature verified; not upgrading in check mode"
+    exit 0
+fi
+
+echo "Upgrading to ${remote} (${digest})"
+/usr/bin/kairos-agent upgrade --source "oci:${image}@${digest}"
+/usr/bin/install -d -m 0755 /var/lib/kairos
+printf '%s %s %s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${remote}" "${digest}" \
+    > /var/lib/kairos/auto-update-pending
+echo "Upgrade staged; rebooting"
+/usr/bin/systemctl reboot --no-block

@@ -1,0 +1,12 @@
+[Unit]
+Description=Remove legacy Kairos host units from persistent /etc
+After=local-fs.target
+Before=multi-user.target brew-firstboot.service ssh-sync-firstboot.service kairos-auto-update.timer
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/kairos-legacy-cleanup
+TimeoutStartSec=2min
+
+[Install]
+WantedBy=multi-user.target

@@ -14,6 +14,7 @@ FROM fedora:45@sha256:a7d72ba2745b100a3351087472e5ee7b2450af7cf331e7673007e38176
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG VERSION=0.1.0
+ARG USERNAME=nithin
 
 # Pinned cosign used by the automatic updater to verify the image before
 # staging an upgrade. Update the version and checksum together.
@@ -85,10 +86,6 @@ RUN set -eux; \
     firecracker --version; \
     jailer --version
 
-# 6. Enable IPv4 forwarding for Firecracker TAP/NAT networking.
-RUN mkdir -p /usr/lib/sysctl.d && \
-    echo 'net.ipv4.ip_forward = 1' > /usr/lib/sysctl.d/99-firecracker.conf
-
 # Install cosign so the automatic updater can verify image signatures before
 # staging an upgrade.
 RUN set -eux; \
@@ -101,354 +98,30 @@ RUN set -eux; \
     chmod 0755 /usr/bin/cosign; \
     cosign version
 
-# 7. Cap journald log size at 200M. SSH hardening is applied by Kairos's
-# install.ssh_hardening setting, which also disables password authentication.
-RUN mkdir -p /usr/lib/systemd/journald.conf.d && \
-    printf '[Journal]\nSystemMaxUse=200M\n' > /usr/lib/systemd/journald.conf.d/size.conf
+# Copy shared base files from repository root rootfs.
+COPY rootfs/ /
 
-# 8. Prepare the sandbox user's sudo access and KVM group. The user itself is
-# created by cloud-config at install/boot time, so its password and home land on
-# the machine-local filesystem rather than in an immutable image layer.
+# Copy kairos-specific files from kairos/rootfs.
+COPY kairos/rootfs/ /
+
+# 6. Substitute the USERNAME argument into templated files.
 RUN set -eux; \
-    groupadd -f kvm; \
-    mkdir -p /etc/sudoers.d; \
-    echo 'nithin ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/nithin; \
-    chmod 0440 /etc/sudoers.d/nithin
+    sed -i "s/\${USERNAME}/${USERNAME}/g" /etc/sudoers.d/sudoers; \
+    sed -i "s/\${USERNAME}/${USERNAME}/g" /usr/lib/systemd/system/brew-firstboot.service; \
+    sed -i "s/\${USERNAME}/${USERNAME}/g" /usr/lib/systemd/system/ssh-sync-firstboot.service; \
+    sed -i "s/\${USERNAME}/${USERNAME}/g" /usr/lib/tmpfiles.d/homebrew.conf; \
+    chmod 0755 /usr/bin/install-homebrew /usr/bin/install-ssh-sync; \
+    chmod 0755 /usr/bin/kairos-auto-update /usr/bin/kairos-update-healthcheck /usr/bin/kairos-legacy-cleanup; \
+    chmod 0440 /etc/sudoers.d/sudoers
 
-# 9. Pin and verify the first-boot installers. Both run through /var/tmp
-# because Kairos mounts /tmp noexec.
-RUN cat <<'EOF' > /usr/bin/install-homebrew
-#!/bin/bash
-set -euo pipefail
+# 7. Prepare the sandbox user's KVM group. The user itself is created by
+# cloud-config at install/boot time, so its password and home land on the
+# machine-local filesystem rather than in an immutable image layer.
+RUN groupadd -f kvm
 
-url="https://raw.githubusercontent.com/Homebrew/install/e09ddecb4d4f4a3e776c00c62e010276133d1eed/install.sh"
-sha256="34090c61925f5d5c4caca7f1f7089efac33056b1603b4d62b4671d8d22f28fb3"
-tmp="$(mktemp -p /var/tmp homebrew-install.XXXXXX)"
-trap 'rm -f "${tmp}"' EXIT
-
-curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL "${url}" -o "${tmp}"
-echo "${sha256}  ${tmp}" | sha256sum -c -
-NONINTERACTIVE=1 bash "${tmp}"
-EOF
-
-RUN cat <<'EOF' > /usr/bin/install-ssh-sync
-#!/bin/bash
-set -euo pipefail
-
-url="https://raw.githubusercontent.com/felstormrage/scripts/2ca3e75505e5a8625c8fb7f475f91b99801c8d38/install-ssh-sync.sh"
-sha256="ff802f3256eab6ae0ca0dae2daab53168f236b00f05c56387750f06a11a6edc1"
-tmp="$(mktemp -p /var/tmp ssh-sync-install.XXXXXX)"
-trap 'rm -f "${tmp}"' EXIT
-
-curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL "${url}" -o "${tmp}"
-echo "${sha256}  ${tmp}" | sha256sum -c -
-bash "${tmp}"
-EOF
-
-RUN chmod 0755 /usr/bin/install-homebrew /usr/bin/install-ssh-sync
-
-RUN cat <<'EOF' > /usr/lib/systemd/system/brew-firstboot.service
-[Unit]
-Description=Install Homebrew on first boot
-After=network-online.target
-Wants=network-online.target
-ConditionPathExists=!/home/linuxbrew/.linuxbrew/bin/brew
-StartLimitIntervalSec=0
-
-[Service]
-Type=oneshot
-User=nithin
-Environment=NONINTERACTIVE=1
-Environment=HOME=/home/nithin
-Environment=TMPDIR=/var/tmp
-ExecStartPre=/usr/bin/sudo /usr/bin/install -d -o nithin -g nithin /home/linuxbrew
-ExecStart=/usr/bin/install-homebrew
-TimeoutStartSec=30min
-Restart=on-failure
-RestartSec=2min
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 10. Run the SSH key sync installer once on first boot.
-RUN cat <<'EOF' > /usr/lib/systemd/system/ssh-sync-firstboot.service
-[Unit]
-Description=Install SSH key sync on first boot
-After=network-online.target systemd-user-sessions.service
-Wants=network-online.target
-ConditionPathExists=!/var/lib/ssh-sync-firstboot.done
-StartLimitIntervalSec=0
-
-[Service]
-Type=oneshot
-Environment=TMPDIR=/var/tmp
-ExecStart=/bin/bash -ec '\
-  UID_N=$(id -u nithin); \
-  loginctl enable-linger nithin; \
-  systemctl start "user@${UID_N}.service"; \
-  sudo -u nithin \
-    /usr/bin/env HOME=/home/nithin USER=nithin LOGNAME=nithin TMPDIR=/var/tmp \
-    XDG_RUNTIME_DIR="/run/user/${UID_N}" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${UID_N}/bus" \
-    /usr/bin/install-ssh-sync; \
-  touch /var/lib/ssh-sync-firstboot.done'
-TimeoutStartSec=10min
-Restart=on-failure
-RestartSec=2min
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 11. Check the published Kairos image daily and upgrade when its version
-# differs from the installed one. The version label lives in the image config,
-# so checking it only pulls a few KB instead of the whole image.
-#
-# Keep this under /usr: /usr/local is the persistent partition on Kairos, so
-# image content written there is hidden at runtime.
-RUN cat <<'EOF' > /usr/bin/kairos-auto-update
-#!/bin/bash
-set -euo pipefail
-
-image="ghcr.io/felstormrage/agent-sandbox-image:kairos-latest"
-release_file="/etc/kairos-release"
-mode="${1:---upgrade}"
-# Keyless signatures are issued to this repository's build workflow on main.
-# Override these for a fork or a different signing identity.
-identity_regexp="${KAIROS_UPDATE_COSIGN_IDENTITY:-^https://github\.com/felstormrage/agent-sandbox-image/\.github/workflows/build\.yml@refs/heads/main$}"
-oidc_issuer="${KAIROS_UPDATE_COSIGN_ISSUER:-https://token.actions.githubusercontent.com}"
-
-case "${mode}" in
-    --check|--upgrade) ;;
-    *)
-        echo "Usage: $0 [--check|--upgrade]" >&2
-        exit 2
-        ;;
-esac
-
-current="$(sed -n 's/^KAIROS_VERSION=//p' "${release_file}" | tr -d '"')"
-current="${current#v}"
-
-if [[ -z "${current}" ]]; then
-    echo "Could not read KAIROS_VERSION from ${release_file}" >&2
-    exit 1
-fi
-
-inspect="$(skopeo inspect --retry-times 3 --retry-delay 10s "docker://${image}")"
-remote="$(jq -r '.Labels["org.opencontainers.image.version"] // ""' <<<"${inspect}")"
-digest="$(jq -r '.Digest // ""' <<<"${inspect}")"
-remote="${remote#v}"
-
-if [[ -z "${remote}" ]]; then
-    echo "Could not read the version label from ${image}" >&2
-    exit 1
-fi
-
-if [[ -z "${digest}" ]]; then
-    echo "Could not read the digest from ${image}" >&2
-    exit 1
-fi
-
-echo "Installed version: ${current}"
-echo "Remote version:    ${remote}"
-echo "Remote digest:     ${digest}"
-
-if [[ "${current}" == "${remote}" ]]; then
-    echo "System is up to date"
-    exit 0
-fi
-
-# CI versions increment monotonically, so version sort is sufficient for this
-# channel. Tagged releases must not be older than the installed build.
-if [[ "$(printf '%s\n%s\n' "${current}" "${remote}" | sort -V | tail -n1)" != "${remote}" ]]; then
-    echo "Remote version ${remote} is not newer than installed ${current}; skipping"
-    exit 0
-fi
-
-cosign verify \
-    --certificate-identity-regexp "${identity_regexp}" \
-    --certificate-oidc-issuer "${oidc_issuer}" \
-    "${image}@${digest}" >/dev/null
-
-if [[ "${mode}" == "--check" ]]; then
-    echo "Update available and signature verified; not upgrading in check mode"
-    exit 0
-fi
-
-echo "Upgrading to ${remote} (${digest})"
-/usr/bin/kairos-agent upgrade --source "oci:${image}@${digest}"
-/usr/bin/install -d -m 0755 /var/lib/kairos
-printf '%s %s %s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${remote}" "${digest}" \
-    > /var/lib/kairos/auto-update-pending
-echo "Upgrade staged; rebooting"
-/usr/bin/systemctl reboot --no-block
-EOF
-
-RUN chmod 0755 /usr/bin/kairos-auto-update
-
-RUN cat <<'EOF' > /usr/lib/systemd/system/kairos-auto-update.service
-[Unit]
-Description=Install Kairos OS updates from GHCR
-After=network-online.target
-Wants=network-online.target
-ConditionPathExists=!/run/cos/recovery_mode
-ConditionPathExists=!/run/cos/live_mode
-
-[Service]
-Type=oneshot
-Environment=TMPDIR=/var/lib/kairos/tmp
-ExecStartPre=/usr/bin/install -d -m 0755 /var/lib/kairos/tmp
-ExecStart=/usr/bin/flock -n -E 0 /run/kairos-auto-update.lock /usr/bin/kairos-auto-update --upgrade
-Nice=10
-IOSchedulingClass=idle
-TimeoutStartSec=2h
-EOF
-
-RUN cat <<'EOF' > /usr/lib/systemd/system/kairos-auto-update.timer
-[Unit]
-Description=Daily Kairos OS update check
-
-[Timer]
-OnCalendar=*-*-* 06:00:00 UTC
-RandomizedDelaySec=1h
-Persistent=true
-Unit=kairos-auto-update.service
-
-[Install]
-WantedBy=timers.target
-EOF
-
-# 12. Verify a freshly updated image after it boots. Kairos boot assessment only
-# proves that the boot reached cloud-init; this checks the sandbox services and
-# falls back to the previous image if the new one is unhealthy.
-RUN cat <<'EOF' > /usr/bin/kairos-update-healthcheck
-#!/bin/bash
-set -euo pipefail
-
-marker="/var/lib/kairos/auto-update-pending"
-failed="${marker}.failed"
-
-if [[ ! -f "${marker}" ]]; then
-    exit 0
-fi
-
-fail() {
-    echo "Kairos update healthcheck failed: $*" >&2
-    mv -f "${marker}" "${failed}" || true
-    if /usr/bin/kairos-agent bootentry --select fallback; then
-        echo "Selected the fallback boot entry; rebooting" >&2
-        /usr/bin/systemctl reboot --no-block
-    else
-        echo "Could not select the fallback boot entry; manual intervention required" >&2
-    fi
-    exit 1
-}
-
-state="$(/usr/bin/systemctl is-system-running --wait || true)"
-if [[ "${state}" != "running" ]]; then
-    fail "system state is ${state:-unknown}"
-fi
-
-/usr/bin/systemctl is-active --quiet sshd || fail "sshd is not active"
-/usr/bin/systemctl is-active --quiet qemu-guest-agent || fail "qemu-guest-agent is not active"
-/usr/bin/podman info >/dev/null 2>&1 || fail "podman info failed"
-/usr/local/bin/runsc --version >/dev/null 2>&1 || fail "runsc is not runnable"
-/usr/local/bin/firecracker --version >/dev/null 2>&1 || fail "firecracker is not runnable"
-/usr/sbin/sshd -T 2>/dev/null | grep -q '^passwordauthentication no$' \
-    || fail "sshd password authentication is not disabled"
-
-echo "Kairos update healthcheck passed; clearing pending marker"
-rm -f "${marker}"
-EOF
-
-RUN chmod 0755 /usr/bin/kairos-update-healthcheck
-
-RUN cat <<'EOF' > /usr/lib/systemd/system/kairos-update-healthcheck.service
-[Unit]
-Description=Verify a Kairos update after reboot
-After=network-online.target
-Wants=network-online.target
-ConditionPathExists=/var/lib/kairos/auto-update-pending
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/kairos-update-healthcheck
-Nice=10
-IOSchedulingClass=idle
-TimeoutStartSec=15min
-EOF
-
-RUN cat <<'EOF' > /usr/lib/systemd/system/kairos-update-healthcheck.timer
-[Unit]
-Description=Run the Kairos update healthcheck after boot
-
-[Timer]
-OnBootSec=3min
-Unit=kairos-update-healthcheck.service
-
-[Install]
-WantedBy=timers.target
-EOF
-
-# 13. Wire Homebrew and zoxide into fish automatically. Vendor snippets live
-# under /usr so they travel with image upgrades.
-RUN mkdir -p /usr/share/fish/vendor_conf.d && \
-    echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /usr/share/fish/vendor_conf.d/brew.fish && \
-    echo 'zoxide init fish | source' > /usr/share/fish/vendor_conf.d/zoxide.fish
-
-# 14. Remove legacy units that older images baked into persistent /etc/systemd.
-# Without this, an upgraded host keeps the old auto-update unit that pointed at
-# the removed /usr/local/bin script. The cleanup is a no-op on fresh installs.
-RUN cat <<'EOF' > /usr/bin/kairos-legacy-cleanup
-#!/bin/bash
-set -euo pipefail
-
-changed=0
-for path in \
-    /etc/systemd/system/brew-firstboot.service \
-    /etc/systemd/system/ssh-sync-firstboot.service \
-    /etc/systemd/system/kairos-auto-update.service \
-    /etc/systemd/system/kairos-auto-update.timer \
-    /etc/systemd/system/multi-user.target.wants/brew-firstboot.service \
-    /etc/systemd/system/multi-user.target.wants/ssh-sync-firstboot.service \
-    /etc/systemd/system/timers.target.wants/kairos-auto-update.timer \
-    /usr/local/bin/kairos-auto-update; do
-    if [[ -e "${path}" || -L "${path}" ]]; then
-        rm -f "${path}"
-        changed=1
-    fi
-done
-
-if [[ "${changed}" -eq 1 ]]; then
-    /usr/bin/systemctl daemon-reload
-    /usr/bin/systemctl enable \
-        brew-firstboot.service \
-        ssh-sync-firstboot.service \
-        kairos-auto-update.timer \
-        kairos-update-healthcheck.timer
-fi
-EOF
-
-RUN chmod 0755 /usr/bin/kairos-legacy-cleanup
-
-RUN cat <<'EOF' > /usr/lib/systemd/system/kairos-legacy-cleanup.service
-[Unit]
-Description=Remove legacy Kairos host units from persistent /etc
-After=local-fs.target
-Before=multi-user.target brew-firstboot.service ssh-sync-firstboot.service kairos-auto-update.timer
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/kairos-legacy-cleanup
-TimeoutStartSec=2min
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 15. Enable required services.
+# 8. Enable required services and finalize the Kairos initramfs and OS
+# metadata after all custom files and runtime assets are in place, then
+# validate the resulting image.
 RUN systemctl enable \
     kairos-legacy-cleanup.service \
     qemu-guest-agent.service \
@@ -459,8 +132,6 @@ RUN systemctl enable \
     kairos-auto-update.timer \
     kairos-update-healthcheck.timer
 
-# 16. Finalize the Kairos initramfs and OS metadata after all custom files and
-# runtime assets are in place, then validate the resulting image.
 RUN --mount=type=bind,from=kairos-init,src=/kairos-init,dst=/kairos-init \
     /kairos-init -l info -s init --version "${VERSION}" && \
     /kairos-init validate && \

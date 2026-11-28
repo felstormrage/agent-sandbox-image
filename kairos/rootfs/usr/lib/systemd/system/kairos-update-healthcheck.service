@@ -1,0 +1,12 @@
+[Unit]
+Description=Verify a Kairos update after reboot
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/kairos/auto-update-pending
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/kairos-update-healthcheck
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=15min

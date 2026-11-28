@@ -28,14 +28,15 @@ RUN set -eux; \
         git gcc make patch unzip bzip2 which zlib-devel procps-ng file; \
     dnf clean all
 
-# 2-11. Copy pre-built configuration, scripts, and systemd units.
+# 2-11. Copy shared scripts and copy pre-built configuration, scripts, and systemd units.
 # This reduces layer count, improves syntax highlighting, and makes git diffs cleaner.
 COPY rootfs/ /
+COPY fedora-minimal/rootfs/ /
 RUN chmod 0755 /usr/bin/install-homebrew /usr/bin/install-ssh-sync /usr/bin/fedora-minimal-legacy-cleanup && \
     chmod 0440 /etc/sudoers.d/sudoers
 
 # Substitute the USERNAME in configuration files.
-RUN find /usr/lib/tmpfiles.d /usr/lib/systemd/system /home -type f 2>/dev/null -exec sed -i "s/\${USERNAME}/${USERNAME}/g" {} \;
+RUN find /usr/lib/tmpfiles.d /usr/lib/systemd/system -type f -exec sed -i "s/\${USERNAME}/${USERNAME}/g" {} \;
 
 # 12. Enable required services and timers, and disable kdump on small VMs.
 RUN systemctl enable \

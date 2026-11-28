@@ -1,0 +1,37 @@
+#!/bin/bash
+set -euo pipefail
+
+marker="/var/lib/kairos/auto-update-pending"
+failed="${marker}.failed"
+
+if [[ ! -f "${marker}" ]]; then
+    exit 0
+fi
+
+fail() {
+    echo "Kairos update healthcheck failed: $*" >&2
+    mv -f "${marker}" "${failed}" || true
+    if /usr/bin/kairos-agent bootentry --select fallback; then
+        echo "Selected the fallback boot entry; rebooting" >&2
+        /usr/bin/systemctl reboot --no-block
+    else
+        echo "Could not select the fallback boot entry; manual intervention required" >&2
+    fi
+    exit 1
+}
+
+state="$(/usr/bin/systemctl is-system-running --wait || true)"
+if [[ "${state}" != "running" ]]; then
+    fail "system state is ${state:-unknown}"
+fi
+
+/usr/bin/systemctl is-active --quiet sshd || fail "sshd is not active"
+/usr/bin/systemctl is-active --quiet qemu-guest-agent || fail "qemu-guest-agent is not active"
+/usr/bin/podman info >/dev/null 2>&1 || fail "podman info failed"
+/usr/local/bin/runsc --version >/dev/null 2>&1 || fail "runsc is not runnable"
+/usr/local/bin/firecracker --version >/dev/null 2>&1 || fail "firecracker is not runnable"
+/usr/sbin/sshd -T 2>/dev/null | grep -q '^passwordauthentication no$' \
+    || fail "sshd password authentication is not disabled"
+
+echo "Kairos update healthcheck passed; clearing pending marker"
+rm -f "${marker}"
