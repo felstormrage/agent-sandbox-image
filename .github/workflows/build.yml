@@ -193,7 +193,7 @@ jobs:
           else
             tag="opencode-${{ needs.build.outputs.version }}"
           fi
-          echo "ref=${REGISTRY}/${{ needs.build.outputs.image }}:${tag}" >> "$GITHUB_OUTPUT"
+          echo "ref=${REGISTRY}/${{ needs.build.outputs.image }}/opencode:${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Docker metadata
         id: meta
