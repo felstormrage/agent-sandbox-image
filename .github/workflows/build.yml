@@ -345,8 +345,10 @@ jobs:
 
           public_key="${HOST_SSH_PUBLIC_KEY:-}"
           if [ -z "${public_key}" ]; then
-            echo "HOST_SSH_PUBLIC_KEY is required for key-only SSH" >&2
-            exit 1
+            echo "Generating temporary SSH key pair for this build..."
+            ssh_keyfile="build/temp_ssh_key"
+            ssh-keygen -t ed25519 -f "${ssh_keyfile}" -N "" -C "temporary-build-key"
+            public_key="$(cat ${ssh_keyfile}.pub)"
           fi
           printf '%s\n' "${public_key}" | ssh-keygen -l -f - >/dev/null
 
@@ -532,8 +534,10 @@ jobs:
 
           public_key="${HOST_SSH_PUBLIC_KEY:-}"
           if [ -z "${public_key}" ]; then
-            echo "HOST_SSH_PUBLIC_KEY is required for key-only SSH" >&2
-            exit 1
+            echo "Generating temporary SSH key pair for this build..."
+            ssh_keyfile="build/temp_ssh_key"
+            ssh-keygen -t ed25519 -f "${ssh_keyfile}" -N "" -C "temporary-build-key"
+            public_key="$(cat ${ssh_keyfile}.pub)"
           fi
           printf '%s\n' "${public_key}" | ssh-keygen -l -f - >/dev/null
 
@@ -554,8 +558,13 @@ jobs:
           Path(os.environ["OUTPUT"]).write_text(text)
           PY
 
-          printf '%s' "${GH_TOKEN}" | sudo podman login ghcr.io \
-            -u "${{ github.actor }}" --password-stdin
+          
+          if [ -n "${GH_TOKEN}" ]; then
+            printf '%s' "${GH_TOKEN}" | sudo podman login ghcr.io \
+              -u "${{ github.actor }}" --password-stdin
+          else
+            echo "Warning: GH_TOKEN not provided, skipping private registry authentication"
+          fi
 
           build_disk() {
             local ref="$1"
