@@ -45,10 +45,6 @@ RUN mkdir -p /usr/lib/bootc/install && \
 [[install.filesystem]]
 mountpoint = "/"
 type = "xfs"
-
-[[install.filesystem]]
-mountpoint = "/boot"
-type = "ext4"
 EOF
 
 # 12. Enable required services and timers, and disable kdump on small VMs.
