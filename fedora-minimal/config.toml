@@ -20,6 +20,3 @@ password_authentication = false
 kbd_interactive_authentication = false
 client_alive_interval = 300
 permit_root_login = "no"
-
-[customizations.firewall.services]
-enabled = ["ssh"]
