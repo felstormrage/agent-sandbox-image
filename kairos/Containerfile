@@ -38,6 +38,8 @@ RUN --mount=type=bind,from=kairos-init,src=/kairos-init,dst=/kairos-init \
     /kairos-init -l info -s install --version "${VERSION}"
 
 # 2. Core system, virtualization/container runtime, networking, and CLI tools.
+# Developer tools (bat, ripgrep, fd-find, du-dust, eza, zoxide, btop, neovim)
+# are installed via Homebrew on first boot instead of in this layer.
 # hadolint ignore=DL3041
 RUN set -eux; \
     dnf -y install \
@@ -45,7 +47,6 @@ RUN set -eux; \
         podman containernetworking-plugins nftables iproute iproute-tc conntrack-tools \
         container-selinux jq skopeo \
         curl wget fish tmux sudo openssh-server tar zstd \
-        bat ripgrep fd-find du-dust eza zoxide btop neovim \
         git gcc make patch unzip bzip2 which zlib-devel procps-ng file; \
     dnf clean all
 

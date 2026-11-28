@@ -9,3 +9,12 @@ trap 'rm -f "${tmp}"' EXIT
 curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL "${url}" -o "${tmp}"
 echo "${sha256}  ${tmp}" | sha256sum -c -
 NONINTERACTIVE=1 bash "${tmp}"
+
+# Install curated set of developer tools via Homebrew.
+# These are mutable tools that users can customize after boot.
+# See /etc/homebrew-tools.txt for the list.
+if [ -f /etc/homebrew-tools.txt ]; then
+  echo "Installing Homebrew tools..."
+  # shellcheck disable=SC2046
+  brew install $(cat /etc/homebrew-tools.txt) || true
+fi

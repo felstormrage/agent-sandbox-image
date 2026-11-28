@@ -1,0 +1,8 @@
+bat
+ripgrep
+fd
+du-dust
+eza
+zoxide
+btop
+neovim
