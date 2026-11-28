@@ -6,28 +6,51 @@ sha256="34090c61925f5d5c4caca7f1f7089efac33056b1603b4d62b4671d8d22f28fb3"
 tmp="$(mktemp -p /var/tmp homebrew-install.XXXXXX)"
 trap 'rm -f "${tmp}"' EXIT
 
-echo "Installing Homebrew..."
-curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL "${url}" -o "${tmp}"
-echo "${sha256}  ${tmp}" | sha256sum -c -
-NONINTERACTIVE=1 bash "${tmp}" || { echo "Homebrew installation failed"; exit 1; }
+echo "Installing Homebrew..." >&2
+# Download with timeouts
+timeout 120 curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL "${url}" -o "${tmp}" || {
+  echo "Failed to download Homebrew installer" >&2
+  exit 1
+}
+
+echo "Verifying Homebrew installer..." >&2
+echo "${sha256}  ${tmp}" | sha256sum -c - || {
+  echo "Homebrew installer checksum verification failed" >&2
+  exit 1
+}
+
+echo "Running Homebrew installer..." >&2
+# Homebrew installation with timeout
+NONINTERACTIVE=1 timeout 1800 bash "${tmp}" || {
+  echo "Homebrew installation failed or timed out" >&2
+  exit 1
+}
+echo "Homebrew installation completed" >&2
 
 # Install curated set of developer tools via Homebrew.
 # These are mutable tools that users can customize after boot.
 # See /etc/homebrew-tools.txt for the list.
 if [ -f /etc/homebrew-tools.txt ]; then
-  echo "Installing Homebrew tools..."
+  echo "Installing Homebrew tools..." >&2
   brew_bin="/home/linuxbrew/.linuxbrew/bin/brew"
   if [ -x "${brew_bin}" ]; then
+    echo "Setting up Homebrew environment..." >&2
     # Eval Homebrew environment variables to ensure brew is in PATH
-    eval "$("${brew_bin}" shellenv)" || true
-    # Install tools, don't fail if one fails
-    "${brew_bin}" install $(cat /etc/homebrew-tools.txt) || true
-    echo "Homebrew tools installation completed"
+    eval "$("${brew_bin}" shellenv)" 2>/dev/null || true
+    
+    echo "Installing tools: $(tr '\n' ' ' < /etc/homebrew-tools.txt)" >&2
+    # Install tools with timeout, don't fail if one fails
+    timeout 3600 "${brew_bin}" install $(cat /etc/homebrew-tools.txt) 2>&1 || {
+      echo "Warning: Some tools failed to install, but continuing" >&2
+    }
+    echo "Homebrew tools installation completed" >&2
   else
-    echo "Warning: Homebrew binary not found at ${brew_bin}"
+    echo "Error: Homebrew binary not found at ${brew_bin}" >&2
+    exit 1
   fi
 else
-  echo "Warning: /etc/homebrew-tools.txt not found"
+  echo "Error: /etc/homebrew-tools.txt not found" >&2
+  exit 1
 fi
 
-echo "Homebrew setup complete"
+echo "Homebrew setup complete" >&2
