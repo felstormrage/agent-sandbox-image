@@ -39,6 +39,16 @@ RUN chmod 0755 /usr/bin/install-homebrew /usr/bin/install-ssh-sync /usr/bin/fedo
 # Substitute the USERNAME in configuration files.
 RUN find /usr/lib/tmpfiles.d /usr/lib/systemd/system -type f -exec sed -i "s/\${USERNAME}/${USERNAME}/g" {} \;
 
+# 11. Add bootc install configuration specifying filesystem defaults for image building.
+RUN mkdir -p /usr/lib/bootc/install && \
+    cat > /usr/lib/bootc/install/99-fedora-install.toml <<'EOF'
+[install]
+filesystem = [
+    { mountpoint = "/", type = "xfs", size = "10 GiB" },
+    { mountpoint = "/boot", type = "ext4", size = "1 GiB" },
+]
+EOF
+
 # 12. Enable required services and timers, and disable kdump on small VMs.
 RUN systemctl enable \
     fedora-minimal-legacy-cleanup.service \
