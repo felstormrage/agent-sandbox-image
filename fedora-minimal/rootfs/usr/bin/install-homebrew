@@ -1,0 +1,11 @@
+#!/bin/bash
+set -euo pipefail
+
+url="https://raw.githubusercontent.com/Homebrew/install/e09ddecb4d4f4a3e776c00c62e010276133d1eed/install.sh"
+sha256="34090c61925f5d5c4caca7f1f7089efac33056b1603b4d62b4671d8d22f28fb3"
+tmp="$(mktemp -p /var/tmp homebrew-install.XXXXXX)"
+trap 'rm -f "${tmp}"' EXIT
+
+curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL "${url}" -o "${tmp}"
+echo "${sha256}  ${tmp}" | sha256sum -c -
+NONINTERACTIVE=1 bash "${tmp}"

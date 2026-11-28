@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+
+changed=0
+for path in \
+    /etc/systemd/system/brew-firstboot.service \
+    /etc/systemd/system/ssh-sync-firstboot.service \
+    /etc/systemd/system/multi-user.target.wants/brew-firstboot.service \
+    /etc/systemd/system/multi-user.target.wants/ssh-sync-firstboot.service \
+    /etc/systemd/system/bootc-fetch-apply-updates.timer.d/override.conf; do
+    if [[ -e "${path}" || -L "${path}" ]]; then
+        rm -f "${path}"
+        changed=1
+    fi
+done
+
+if [[ "${changed}" -eq 1 ]]; then
+    /usr/bin/systemctl daemon-reload
+    /usr/bin/systemctl enable \
+        brew-firstboot.service \
+        ssh-sync-firstboot.service
+fi

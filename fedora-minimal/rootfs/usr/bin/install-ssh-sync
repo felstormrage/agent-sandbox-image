@@ -1,0 +1,11 @@
+#!/bin/bash
+set -euo pipefail
+
+url="https://raw.githubusercontent.com/felstormrage/scripts/2ca3e75505e5a8625c8fb7f475f91b99801c8d38/install-ssh-sync.sh"
+sha256="ff802f3256eab6ae0ca0dae2daab53168f236b00f05c56387750f06a11a6edc1"
+tmp="$(mktemp -p /var/tmp ssh-sync-install.XXXXXX)"
+trap 'rm -f "${tmp}"' EXIT
+
+curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL "${url}" -o "${tmp}"
+echo "${sha256}  ${tmp}" | sha256sum -c -
+bash "${tmp}"

@@ -1,0 +1,20 @@
+[Unit]
+Description=Install Homebrew on first boot
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/home/linuxbrew/.linuxbrew/bin/brew
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=${USERNAME}
+Environment=NONINTERACTIVE=1
+Environment=HOME=/home/${USERNAME}
+Environment=TMPDIR=/var/tmp
+ExecStart=/usr/bin/install-homebrew
+TimeoutStartSec=30min
+Restart=on-failure
+RestartSec=2min
+
+[Install]
+WantedBy=multi-user.target

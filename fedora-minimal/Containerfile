@@ -12,6 +12,7 @@ FROM quay.io/fedora/fedora-bootc:45
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG VERSION=0.1.0
+ARG USERNAME=nithin
 
 LABEL org.opencontainers.image.title="fedora-minimal-sandbox" \
       org.opencontainers.image.description="Fedora bootc sandbox host with fish, Homebrew, and SSH key sync" \
@@ -21,188 +22,22 @@ LABEL org.opencontainers.image.title="fedora-minimal-sandbox" \
 # hadolint ignore=DL3041
 RUN set -eux; \
     dnf -y install \
-        qemu-guest-agent firewalld audit fail2ban zram-generator-defaults \
+        qemu-guest-agent firewalld audit fail2ban fail2ban-firewalld zram-generator-defaults \
         curl wget fish tmux sudo openssh-server \
         bat ripgrep fd-find du-dust eza zoxide btop neovim \
         git gcc make patch unzip bzip2 which zlib-devel procps-ng file; \
     dnf clean all
 
-# 2. Bake the serial-console kernel arguments into bootc.
-RUN mkdir -p /usr/lib/bootc/kargs.d && \
-    cat <<'EOF' > /usr/lib/bootc/kargs.d/00-console.toml
-kargs = ["console=tty0", "console=ttyS0,115200n8"]
-match-architectures = ["x86_64"]
-EOF
+# 2-11. Copy pre-built configuration, scripts, and systemd units.
+# This reduces layer count, improves syntax highlighting, and makes git diffs cleaner.
+COPY rootfs/ /
+RUN chmod 0755 /usr/bin/install-homebrew /usr/bin/install-ssh-sync /usr/bin/fedora-minimal-legacy-cleanup && \
+    chmod 0440 /etc/sudoers.d/sudoers
 
-# 3. Tame bootc auto-updates to a 04:00 daily maintenance window.
-RUN mkdir -p /usr/lib/systemd/system/bootc-fetch-apply-updates.timer.d && \
-    cat <<'EOF' > /usr/lib/systemd/system/bootc-fetch-apply-updates.timer.d/override.conf
-[Timer]
-OnBootSec=
-OnUnitInactiveSec=
-OnCalendar=*-*-* 04:00:00
-RandomizedDelaySec=15m
-Persistent=true
-EOF
+# Substitute the USERNAME in configuration files.
+RUN find /usr/lib/tmpfiles.d /usr/lib/systemd/system /home -type f 2>/dev/null -exec sed -i "s/\${USERNAME}/${USERNAME}/g" {} \;
 
-# 4. Cap journald log size at 200M. SSH policy is applied by the
-# bootc-image-builder customizations in config.toml.
-RUN mkdir -p /usr/lib/systemd/journald.conf.d && \
-    printf '[Journal]\nSystemMaxUse=200M\n' > /usr/lib/systemd/journald.conf.d/size.conf
-
-# 5. Enable the fail2ban sshd jail. SSH itself is key-only; this still keeps
-# noisy failed connection attempts out of the logs and firewall.
-RUN mkdir -p /etc/fail2ban/jail.d && \
-    printf '[sshd]\nenabled = true\n' > /etc/fail2ban/jail.d/sshd.local
-
-RUN mkdir -p /usr/lib/systemd/system/fail2ban.service.d && \
-    printf '[Unit]\nAfter=firewalld.service\nWants=firewalld.service\n' \
-        > /usr/lib/systemd/system/fail2ban.service.d/after-firewalld.conf
-
-# 6. Permit passwordless sudo for the user created by config.toml. The user is
-# created at disk-build time by bootc-image-builder, not in the container layer,
-# so /home stays out of the immutable image.
-RUN mkdir -p /etc/sudoers.d && \
-    echo 'nithin ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/nithin && \
-    chmod 0440 /etc/sudoers.d/nithin
-
-# 7. Pin and verify the first-boot installers.
-RUN cat <<'EOF' > /usr/bin/install-homebrew
-#!/bin/bash
-set -euo pipefail
-
-url="https://raw.githubusercontent.com/Homebrew/install/e09ddecb4d4f4a3e776c00c62e010276133d1eed/install.sh"
-sha256="34090c61925f5d5c4caca7f1f7089efac33056b1603b4d62b4671d8d22f28fb3"
-tmp="$(mktemp -p /var/tmp homebrew-install.XXXXXX)"
-trap 'rm -f "${tmp}"' EXIT
-
-curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL "${url}" -o "${tmp}"
-echo "${sha256}  ${tmp}" | sha256sum -c -
-NONINTERACTIVE=1 bash "${tmp}"
-EOF
-
-RUN cat <<'EOF' > /usr/bin/install-ssh-sync
-#!/bin/bash
-set -euo pipefail
-
-url="https://raw.githubusercontent.com/felstormrage/scripts/2ca3e75505e5a8625c8fb7f475f91b99801c8d38/install-ssh-sync.sh"
-sha256="ff802f3256eab6ae0ca0dae2daab53168f236b00f05c56387750f06a11a6edc1"
-tmp="$(mktemp -p /var/tmp ssh-sync-install.XXXXXX)"
-trap 'rm -f "${tmp}"' EXIT
-
-curl --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 -fsSL "${url}" -o "${tmp}"
-echo "${sha256}  ${tmp}" | sha256sum -c -
-bash "${tmp}"
-EOF
-
-RUN chmod 0755 /usr/bin/install-homebrew /usr/bin/install-ssh-sync
-
-RUN cat <<'EOF' > /usr/lib/systemd/system/brew-firstboot.service
-[Unit]
-Description=Install Homebrew on first boot
-After=network-online.target
-Wants=network-online.target
-ConditionPathExists=!/home/linuxbrew/.linuxbrew/bin/brew
-StartLimitIntervalSec=0
-
-[Service]
-Type=oneshot
-User=nithin
-Environment=NONINTERACTIVE=1
-Environment=HOME=/home/nithin
-Environment=TMPDIR=/var/tmp
-ExecStartPre=/usr/bin/sudo /usr/bin/install -d -o nithin -g nithin /home/linuxbrew
-ExecStart=/usr/bin/install-homebrew
-TimeoutStartSec=30min
-Restart=on-failure
-RestartSec=2min
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 8. Run the SSH key sync installer once on first boot.
-RUN cat <<'EOF' > /usr/lib/systemd/system/ssh-sync-firstboot.service
-[Unit]
-Description=Install SSH key sync on first boot
-After=network-online.target systemd-user-sessions.service
-Wants=network-online.target
-ConditionPathExists=!/var/lib/ssh-sync-firstboot.done
-StartLimitIntervalSec=0
-
-[Service]
-Type=oneshot
-Environment=TMPDIR=/var/tmp
-ExecStart=/bin/bash -ec '\
-  UID_N=$(id -u nithin); \
-  loginctl enable-linger nithin; \
-  systemctl start "user@${UID_N}.service"; \
-  sudo -u nithin \
-    /usr/bin/env HOME=/home/nithin USER=nithin LOGNAME=nithin TMPDIR=/var/tmp \
-    XDG_RUNTIME_DIR="/run/user/${UID_N}" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${UID_N}/bus" \
-    /usr/bin/install-ssh-sync; \
-  touch /var/lib/ssh-sync-firstboot.done'
-TimeoutStartSec=10min
-Restart=on-failure
-RestartSec=2min
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 9. Remove units and drop-ins that older images baked into persistent /etc.
-# The new copies live under /usr/lib and must not be shadowed by stale /etc
-# files after an upgrade.
-RUN cat <<'EOF' > /usr/bin/fedora-minimal-legacy-cleanup
-#!/bin/bash
-set -euo pipefail
-
-changed=0
-for path in \
-    /etc/systemd/system/brew-firstboot.service \
-    /etc/systemd/system/ssh-sync-firstboot.service \
-    /etc/systemd/system/multi-user.target.wants/brew-firstboot.service \
-    /etc/systemd/system/multi-user.target.wants/ssh-sync-firstboot.service \
-    /etc/systemd/system/bootc-fetch-apply-updates.timer.d/override.conf; do
-    if [[ -e "${path}" || -L "${path}" ]]; then
-        rm -f "${path}"
-        changed=1
-    fi
-done
-
-if [[ "${changed}" -eq 1 ]]; then
-    /usr/bin/systemctl daemon-reload
-    /usr/bin/systemctl enable \
-        brew-firstboot.service \
-        ssh-sync-firstboot.service
-fi
-EOF
-
-RUN chmod 0755 /usr/bin/fedora-minimal-legacy-cleanup
-
-RUN cat <<'EOF' > /usr/lib/systemd/system/fedora-minimal-legacy-cleanup.service
-[Unit]
-Description=Remove legacy Fedora minimal host units from persistent /etc
-After=local-fs.target
-Before=multi-user.target brew-firstboot.service ssh-sync-firstboot.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/fedora-minimal-legacy-cleanup
-TimeoutStartSec=2min
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 10. Wire Homebrew and zoxide into fish automatically. Vendor snippets live
-# under /usr so they travel with image upgrades.
-RUN mkdir -p /usr/share/fish/vendor_conf.d && \
-    echo 'test -x /home/linuxbrew/.linuxbrew/bin/brew; and eval (/home/linuxbrew/.linuxbrew/bin/brew shellenv)' > /usr/share/fish/vendor_conf.d/brew.fish && \
-    echo 'zoxide init fish | source' > /usr/share/fish/vendor_conf.d/zoxide.fish
-
-# 11. Enable required services and timers, and disable kdump on small VMs.
+# 12. Enable required services and timers, and disable kdump on small VMs.
 RUN systemctl enable \
     fedora-minimal-legacy-cleanup.service \
     bootc-fetch-apply-updates.timer \
@@ -216,5 +51,5 @@ RUN systemctl enable \
     fail2ban.service && \
     (systemctl disable kdump.service 2>/dev/null || true)
 
-# 12. Validate the bootc image layout and configuration.
+# 13. Validate the bootc image layout and configuration.
 RUN bootc container lint

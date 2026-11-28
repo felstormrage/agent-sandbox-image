@@ -1,0 +1,26 @@
+[Unit]
+Description=Install SSH key sync on first boot
+After=network-online.target systemd-user-sessions.service
+Wants=network-online.target
+ConditionPathExists=!/var/lib/ssh-sync-firstboot.done
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+Environment=TMPDIR=/var/tmp
+ExecStart=/bin/bash -ec '\
+  UID_N=$(id -u ${USERNAME}); \
+  loginctl enable-linger ${USERNAME}; \
+  systemctl start "user@${UID_N}.service"; \
+  sudo -u ${USERNAME} \
+    /usr/bin/env HOME=/home/${USERNAME} USER=${USERNAME} LOGNAME=${USERNAME} TMPDIR=/var/tmp \
+    XDG_RUNTIME_DIR="/run/user/${UID_N}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${UID_N}/bus" \
+    /usr/bin/install-ssh-sync; \
+  touch /var/lib/ssh-sync-firstboot.done'
+TimeoutStartSec=10min
+Restart=on-failure
+RestartSec=2min
+
+[Install]
+WantedBy=multi-user.target
