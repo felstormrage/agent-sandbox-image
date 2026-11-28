@@ -527,7 +527,7 @@ jobs:
           HOST_PASSWORD: ${{ secrets.HOST_PASSWORD }}
           HOST_SSH_PUBLIC_KEY: ${{ secrets.HOST_SSH_PUBLIC_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BIB: quay.io/centos-bootc/bootc-image-builder:latest@sha256:a829b782ecee4764edcac472d5672a76f20002143618fcfbd17dc1cc7319e642
+          BIB: quay.io/centos-bootc/bootc-image-builder:latest
         run: |
           set -euo pipefail
           mkdir -p build/artifacts build/fedora-minimal-test build/fedora-minimal
