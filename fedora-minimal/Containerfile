@@ -42,8 +42,7 @@ RUN find /usr/lib/tmpfiles.d /usr/lib/systemd/system -type f -exec sed -i "s/\${
 # 11. Add bootc install configuration specifying filesystem defaults for image building.
 RUN mkdir -p /usr/lib/bootc/install && \
     cat > /usr/lib/bootc/install/99-fedora-install.toml <<'EOF'
-[[install.filesystem]]
-mountpoint = "/"
+[install.filesystem.root]
 type = "xfs"
 EOF
 
