@@ -335,7 +335,7 @@ jobs:
       - name: Build Kairos qcow2
         if: github.event_name != 'pull_request'
         env:
-          IMAGE_REF: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:kairos-${{ steps.image.outputs.version }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}/kairos:kairos-${{ steps.image.outputs.version }}
           HOST_PASSWORD: ${{ secrets.HOST_PASSWORD }}
           HOST_SSH_PUBLIC_KEY: ${{ secrets.HOST_SSH_PUBLIC_KEY }}
         run: |
@@ -520,8 +520,8 @@ jobs:
       - name: Build and test Fedora minimal qcow2
         if: github.event_name != 'pull_request'
         env:
-          TEST_REF: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:fedora-minimal-${{ steps.image.outputs.version }}
-          LATEST_REF: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:fedora-minimal-latest
+          TEST_REF: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}/fedora-minimal:fedora-minimal-${{ steps.image.outputs.version }}
+          LATEST_REF: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}/fedora-minimal:fedora-minimal-latest
           DIGEST: ${{ steps.push.outputs.digest }}
           IS_DEFAULT_BRANCH: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
           HOST_PASSWORD: ${{ secrets.HOST_PASSWORD }}
